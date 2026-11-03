@@ -1,0 +1,66 @@
+# Run `just prepare` before the workshop: it downloads every image, so the
+# workshop day needs no downloads.
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# The same name and k3s as the workshop's cluster. The name matters: k3d
+# refuses a second cluster of the same name, so two clusters never write to
+# the image cache at once.
+cluster := "infra-workshop"
+k3s := "rancher/k3s:v1.36.5-k3s1@sha256:057cfd5a9d51b89f1f0ee139c28d5d5fdd5aa7ddeac2742a0ba90c6dbc0329bb"
+# The Docker volume that holds the cluster's images. The cluster goes, the
+# volume stays, and the workshop's cluster mounts the same volume.
+image_cache := cluster + "-image-cache"
+# The bases of the workshop's Dockerfiles (scoring, loadgen), pulled on the
+# host, where `docker build` looks for them. Written as in the Dockerfiles.
+build_bases := "golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+
+[private]
+default:
+    @just --list --unsorted
+
+# Download every image the workshop needs, about 2 GB
+prepare:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A cluster starts for the download and is deleted at the end; the images
+    # stay in the Docker volume.
+    : "${ARGOCD_INSTALL:?run inside nix develop}"
+    docker info >/dev/null || { echo "Docker is not running: start it, then run just prepare again" >&2; exit 1; }
+    # Never touch a cluster this run did not create.
+    if k3d cluster get {{cluster}} >/dev/null 2>&1; then
+      echo "A cluster named {{cluster}} already exists." >&2
+      echo "If you started it with just up in workbench/, you are prepared: its images are in the cache." >&2
+      echo "Otherwise remove it with k3d cluster delete {{cluster}}, then run just prepare again." >&2
+      exit 1
+    fi
+    # Set before the create, so a failed or interrupted create is removed too.
+    # A rerun continues: what is already in the volume is not downloaded again.
+    trap 'k3d cluster delete {{cluster}} >/dev/null 2>&1 || true' EXIT
+    for image in {{build_bases}}; do
+      echo "pulling $image"
+      docker pull -q "$image" >/dev/null
+    done
+    # The same kubelet setting as the workshop: the default eviction at 85 %
+    # disk use would stop a well-filled laptop.
+    k3d cluster create {{cluster}} --image {{k3s}} \
+      --k3s-arg "--disable=traefik@server:0" \
+      --k3s-arg "--kubelet-arg=eviction-hard=imagefs.available<1%,nodefs.available<1%@server:0" \
+      --k3s-arg "--kubelet-arg=eviction-minimum-reclaim=imagefs.available=1%,nodefs.available=1%@server:0" \
+      --volume "{{image_cache}}:/var/lib/rancher/k3s/agent/containerd@server:0" \
+      --kubeconfig-update-default=false --wait
+    node=k3d-{{cluster}}-server-0
+    # Three sources: images.txt for the workshop's own manifests, Argo CD's
+    # install manifest, and the k3s version, which sets local-path's helper.
+    helper=$(docker exec $node kubectl -n kube-system get configmap local-path-config -o jsonpath='{.data.helperPod\.yaml}' \
+      | grep -o 'image: .*' | tr -d '"' | cut -d' ' -f2)
+    images=$({ grep -v '^#' images.txt; grep -o 'image: .*' "$ARGOCD_INSTALL" | cut -d' ' -f2; echo "$helper"; } | sort -u)
+    # crictl pulls into the cluster's own image store, with the digests intact.
+    for image in $images; do
+      echo "pulling $image"
+      docker exec $node crictl pull "$image" >/dev/null
+    done
+    # k3s pulls its own images (CoreDNS, metrics-server, ...) while it starts.
+    docker exec $node kubectl -n kube-system rollout status deploy/coredns deploy/local-path-provisioner deploy/metrics-server --timeout=5m
+    echo "Done. Deleting the cluster; the images stay in Docker volume {{image_cache}}."
+    echo "After the workshop: docker volume rm {{image_cache}}"

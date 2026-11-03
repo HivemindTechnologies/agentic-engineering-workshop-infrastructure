@@ -1,0 +1,6 @@
+# The images the workshop's manifests run, written as they are there, so the
+# cluster finds them by the same name.
+grafana/otel-lgtm:0.37.0@sha256:57b5ab1ca6619beb180174e2fccce04762470750669d043f544b4726d0582d07
+otel/opentelemetry-collector-contrib:0.163.1@sha256:1175b03003053962012f5a231f5567f66a3e8fdb960c7835c0e48f7aa1555806
+charmcli/soft-serve:v0.12.3@sha256:e8a12ff7f112558a6cd461ca192fe237d9deb2ec081ace944d2b5a61138a0db9
+alpine:3.24.2
