@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Assemble one spine and write a self-contained static site.
+#   export-html [deck] [outdir]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# reveal-md comes from the presentation flake: run inside `nix develop`.
+
+DECK="deck-${1:-infrastructure-part1}.md"
+OUT="${2:-dist/${1:-infrastructure-part1}}"
+[[ -f "$DECK" ]] || { echo "no such spine: $DECK"; exit 1; }
+./.bin/build-deck "$DECK" >/dev/null
+
+# reveal-md copies its runtime from the read-only Nix store, so the last
+# export is read-only too and must be made writable before it can go.
+if [[ -d "$OUT" ]]; then chmod -R u+w "$OUT"; fi
+rm -rf "$OUT"
+reveal-md ".build/$DECK" \
+  --css theme/hivemind.css,theme/print-pdf.css \
+  --scripts theme/hivemind.js \
+  --static "$OUT"
+
+# reveal-md copies markdown-referenced images, but not fonts pulled in by the
+# theme CSS. Copy the whole assets/ tree so both are present in the export.
+mkdir -p "$OUT/assets"
+cp -R assets/. "$OUT/assets/"
+
+echo "static site written to $OUT/ (fonts + images included)"

@@ -1,0 +1,73 @@
+# One collector per node: kubelet stats (container memory, CPU) and cluster
+# events into lgtm. The pipeline itself is collector/config.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: collector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: collector
+rules:
+  # nodes/stats carries the kubelet_stats metrics; pods and namespaces let
+  # k8s_attributes turn a container id into pod and namespace labels.
+  - apiGroups: [""]
+    resources: [nodes, nodes/stats, nodes/proxy, pods, namespaces, events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: collector
+subjects:
+  - kind: ServiceAccount
+    name: collector
+    namespace: observability
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: collector
+  labels:
+    app: collector
+spec:
+  selector:
+    matchLabels:
+      app: collector
+  template:
+    metadata:
+      labels:
+        app: collector
+    spec:
+      serviceAccountName: collector
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.163.1@sha256:1175b03003053962012f5a231f5567f66a3e8fdb960c7835c0e48f7aa1555806
+          args: ["--config=/etc/collector/config.yaml"]
+          # kubelet_stats addresses the kubelet of its own node.
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/collector
+      volumes:
+        - name: config
+          configMap:
+            name: collector

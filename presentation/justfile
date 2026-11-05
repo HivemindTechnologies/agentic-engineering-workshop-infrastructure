@@ -1,0 +1,18 @@
+# The slides. The recipes call the software track's .bin/ scripts.
+
+# `just` without a recipe runs the first one: list them instead of serving.
+[private]
+default:
+    @just --list --unsorted
+
+# Serve Part 1 or 2 on localhost:8000; edits to a lesson reload the browser.
+serve part="1":
+    ./.bin/watch infrastructure-part{{part}}
+
+# Part 1 or 2 as a static site in dist/.
+html part="1":
+    ./.bin/export-html infrastructure-part{{part}}
+
+# Lesson format, both decks build, comic credits, no local paths.
+check:
+    ./.bin/check

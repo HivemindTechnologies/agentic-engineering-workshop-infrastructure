@@ -1,0 +1,23 @@
+# Kubernetes audit policy: which API requests the cluster writes to its audit
+# log. `just up` mounts this file into the k3s node; the API server reads it at
+# start, so a change needs `just down` and `just up`. Read the log with
+# `just audit`.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+# One line per request, written when the answer is sent.
+omitStages: [RequestReceived]
+rules:
+  # API discovery: kubectl asks it before every command, it names no resource.
+  - level: None
+    nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*", "/version", "/openapi/*"]
+  # Metadata only: who, what, which object, the answer code. Never request or
+  # response bodies, which would copy Secrets into the log.
+  # The agent's identity and yours (the admin kubeconfig).
+  - level: Metadata
+    users: ["system:serviceaccount:kube-system:agent", "system:admin"]
+  # Argo CD's writes: every deploy, the result of a git push.
+  - level: Metadata
+    users: ["system:serviceaccount:argocd:argocd-application-controller"]
+    verbs: [create, update, patch, delete]
+  # The cluster's own controllers would drown the lines above.
+  - level: None

@@ -1,0 +1,20 @@
+# Applied by `just up` after the Argo CD CRDs exist. Syncs deploy/ on main of
+# the in-cluster git server. selfHeal reverts any write that bypassed git;
+# prune deletes what git no longer declares.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workshop
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: http://soft-serve.git.svc.cluster.local:23232/workshop.git
+    targetRevision: main
+    path: workbench/deploy
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

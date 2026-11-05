@@ -1,0 +1,16 @@
+// Reveal.js options for every spine; reveal-md reads this file from the cwd,
+// which every .bin/ script sets to presentation/.
+{
+  // 16:9 like the projector and Zoom share: reveal's default 960x700 is
+  // letterboxed there, which leaves wide empty bands left and right.
+  width: 1280,
+  height: 720,
+  // reveal-md always loads the MathJax 2 plugin, whose default inline
+  // delimiter `$…$` turns prices like "$1 / $5" into formulas and eats the
+  // dollar signs. The deck has no math, so only `\(…\)` stays a delimiter.
+  math: {
+    tex2jax: {
+      inlineMath: [["\\(", "\\)"]],
+    },
+  },
+}

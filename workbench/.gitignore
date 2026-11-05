@@ -1,0 +1,14 @@
+# Go caches, kubeconform schemas, docker config: rebuilt on demand.
+/.cache/
+# Read-only agent kubeconfig and git-server host key, rewritten by `just up`.
+/.kubeconfig
+/.known_hosts
+# Claude Code config dir of the sandboxed sessions.
+/.claude-home/
+/.sandbox_history
+/run1.diff
+# Secrets exercise: encrypted for each participant's own key, and its plaintext.
+/secret.yaml
+/secret.sops.yaml
+# Skills exercise: worktrees live here, because the sandbox writes only inside workbench/.
+/.worktrees/

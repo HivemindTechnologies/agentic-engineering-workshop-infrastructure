@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Every commit that touches workbench/ passes the quality gate. The pins step compares
+# against the index, so it checks exactly what this commit will contain.
+set -euo pipefail
+# git runs hooks from the top of the repository, above the justfile.
+# A slides-only commit has nothing to gate, and the presentation shell lacks
+# the quality gate's tools.
+git diff --cached --quiet -- workbench && exit 0
+[[ -n ${IN_NIX_SHELL:-} ]] || { echo "pre-commit: run git inside workbench's nix develop, the quality gate needs its tools" >&2; exit 1; }
+cd "$(dirname "$0")/.."
+exec just check

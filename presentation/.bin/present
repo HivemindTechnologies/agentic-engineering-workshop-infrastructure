@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Assemble the decks (unless skipped) and serve one of them with live reload.
+#   present                  serve deck-infrastructure-part1.md (rebuild first)
+#   PRESENT_REBUILD=no present   serve existing .build/ without reassembling
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# reveal-md comes from the presentation flake: run inside `nix develop`.
+
+DECK="deck-${1:-infrastructure-part1}.md"
+PORT="${PORT:-8000}"
+REBUILD="${PRESENT_REBUILD:-yes}"
+[[ -f "$DECK" ]] || { echo "no such spine: $DECK"; exit 1; }
+
+case "$REBUILD" in
+  yes)
+    ./.bin/build-deck "$DECK"
+    ;;
+  no)
+    [[ -f ".build/$DECK" ]] || {
+      echo "missing .build/$DECK; run with rebuild=yes (default) first" >&2
+      exit 1
+    }
+    ;;
+  *)
+    echo "PRESENT_REBUILD must be yes or no, got: $REBUILD" >&2
+    exit 1
+    ;;
+esac
+
+exec reveal-md ".build/$DECK" \
+  --css theme/hivemind.css,theme/print-pdf.css \
+  --scripts theme/hivemind.js \
+  --watch \
+  --port "$PORT"

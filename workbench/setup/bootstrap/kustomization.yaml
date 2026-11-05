@@ -1,0 +1,10 @@
+# Applied once by `just up` with the admin kubeconfig, before Argo CD exists.
+# Argo CD itself and the git server it reads from live here and not in
+# deploy/: a bad commit must never be able to take down the path that would
+# deploy its revert.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - argocd.yaml
+  - git-server.yaml
+  - agent-access.yaml

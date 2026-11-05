@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Serve one deck like `present`, and rebuild it whenever a source file changes.
+#   watch                  serve deck-infrastructure-part1.md
+# reveal-md --watch only sees the assembled .build/ file. entr re-runs
+# build-deck on edits to the spine or a lesson; the rewritten .build/ file
+# then triggers reveal-md's browser reload.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+DECK_NAME="${1:-infrastructure-part1}"
+DECK="deck-$DECK_NAME.md"
+[[ -f "$DECK" ]] || { echo "no such spine: $DECK"; exit 1; }
+command -v entr >/dev/null || { echo "watch needs entr, e.g. nix-shell -p entr"; exit 1; }
+
+# entr fixes its file list at start, so a new lessons/*.md needs a restart.
+# -n: no TTY in the background; -p: skip the first run, present builds anyway.
+ls "$DECK" lessons/*.md | entr -np ./.bin/build-deck "$DECK" &
+trap 'kill $! 2>/dev/null || true' EXIT
+
+./.bin/present "$DECK_NAME"

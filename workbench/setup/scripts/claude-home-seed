@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Seed CLAUDE_CONFIG_DIR so a fresh .claude-home/ starts without onboarding and
+# without the trust dialog for the repo. Onboarding's connectivity check trips
+# nono's connect() rate limit, and the dialog would ask about a directory the
+# sandbox already pins.
+# Usage: claude-home-seed <config-dir> <project-root>
+set -euo pipefail
+home="${1:?config-dir}"
+root="${2:?project-root}"
+mkdir -p "$home"
+[[ -f "$home/.claude.json" ]] || echo '{"theme":"auto"}' > "$home/.claude.json"
+jq --arg root "$root" '
+  .hasCompletedOnboarding = true
+  | .projects = (.projects // {})
+  | .projects[$root] = ((.projects[$root] // {}) + {"hasTrustDialogAccepted": true})
+' "$home/.claude.json" > "$home/.claude.json.tmp"
+mv "$home/.claude.json.tmp" "$home/.claude.json"

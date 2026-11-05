@@ -1,0 +1,69 @@
+# The service this workshop operates. Its image tag is set in
+# ../kustomization.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring
+  labels:
+    app: scoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scoring
+  template:
+    metadata:
+      labels:
+        app: scoring
+    spec:
+      containers:
+        - name: scoring
+          image: workshop/scoring
+          # k3d has no registry: the image exists only in the node, imported
+          # by `just images`, and must never be looked up remotely.
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://lgtm.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              value: "true"
+            - name: OTEL_SERVICE_NAME
+              value: scoring
+            # The SDK default of 60s makes a one-minute rate window unusable,
+            # and every panel and check here reasons over minutes.
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            - name: PYROSCOPE_SERVER_ADDRESS
+              value: http://lgtm.observability.svc.cluster.local:4040
+            # The debug MCP (cmd/score/debug.go). Loopback only, no port
+            # above: only `just debug` reaches it. Remove it to turn it off.
+            - name: DEBUG_MCP_ADDR
+              value: 127.0.0.1:7070
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring
+spec:
+  selector:
+    app: scoring
+  ports:
+    - port: 8080

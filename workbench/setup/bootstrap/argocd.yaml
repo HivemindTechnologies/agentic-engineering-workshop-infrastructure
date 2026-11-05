@@ -1,0 +1,61 @@
+# Settings for the upstream Argo CD install manifest ($ARGOCD_INSTALL, pinned
+# in flake.nix). `just up` applies these ConfigMaps first, under their own
+# field manager, so the install manifest's keys and ours coexist.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # Polls git every 15 s instead of every 3 min, so a push shows up while the
+  # participant is still looking. Cheap: one local repository.
+  timeout.reconciliation: 15s
+  # The UI opens without a login, read-only (argocd-rbac-cm). Nobody needs to
+  # write through Argo CD: the only write path is git.
+  users.anonymous.enabled: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-rbac-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  policy.default: role:readonly
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cmd-params-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # Plain HTTP on localhost; TLS would only add a certificate warning.
+  server.insecure: "true"
+---
+# The UI from the host, node port matching the k3d mapping in the justfile.
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server-nodeport
+  namespace: argocd
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: argocd-server
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080

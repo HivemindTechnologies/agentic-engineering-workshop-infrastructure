@@ -1,0 +1,147 @@
+{
+  "uid": "scoring-overview",
+  "title": "Scoring Overview",
+  "tags": ["workshop"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests per second, by route",
+      "description": "Traffic reaching the service. A drop to zero means the service is gone, not that nobody is calling.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{service_name=\"scoring\"}[2m]))",
+          "legendFormat": "{{http_route}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Failed requests per second, by status",
+      "description": "Every response outside 2xx. Empty means every request was answered.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=\"scoring\",http_response_status_code!~\"2..\"}[2m]))",
+          "legendFormat": "{{http_response_status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Request duration, median and 99th percentile",
+      "description": "Latency of POST /score. The two lines apart mean a minority of requests is much more expensive than the rest.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=\"scoring\",http_route=\"/score\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=\"scoring\",http_route=\"/score\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Memory: container working set",
+      "description": "What the kubelet accounts for and kills on. The red threshold is the container's 256Mi limit, declared in platform/workload.tf.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "max": 268435456,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 268435456 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "container_memory_working_set_bytes{k8s_container_name=\"scoring\"}",
+          "legendFormat": "working set"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Process: goroutines and heap in use",
+      "description": "What the service reports about itself. A count that only rises is a count nobody decrements.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "go_goroutine_count{service_name=\"scoring\"}",
+          "legendFormat": "goroutines"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum(go_memory_used_bytes{service_name=\"scoring\"})",
+          "legendFormat": "heap bytes in use"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Cluster events for namespace demo",
+      "description": "What the platform did to the containers: created, started, killed, backed off.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "queryType": "range",
+          "expr": "{service_name=\"kubernetes-events\"} | k8s_namespace_name=\"demo\""
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

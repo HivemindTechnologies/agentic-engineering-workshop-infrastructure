@@ -1,0 +1,70 @@
+# Grafana provisioned alerting. These two rules cover availability only.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: scoring
+    folder: Workshop
+    interval: 1m
+    rules:
+      - uid: scoring-unavailable
+        title: Scoring answers nothing
+        condition: B
+        for: 2m
+        annotations:
+          summary: No request to POST /score has been answered in the last two minutes.
+        labels:
+          service: scoring
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              expr: sum(rate(http_server_request_duration_seconds_count{service_name="scoring",http_route="/score"}[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [0.01]
+
+      - uid: scoring-failing
+        title: Scoring fails requests
+        condition: B
+        for: 2m
+        annotations:
+          summary: More than one percent of scoring requests answer outside 2xx.
+        labels:
+          service: scoring
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              expr: |
+                (sum(rate(http_server_request_duration_seconds_count{service_name="scoring",http_response_status_code!~"2.."}[5m])) or vector(0))
+                /
+                clamp_min(sum(rate(http_server_request_duration_seconds_count{service_name="scoring"}[5m])), 0.001)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.01]

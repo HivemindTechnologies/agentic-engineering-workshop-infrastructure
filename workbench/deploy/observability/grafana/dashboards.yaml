@@ -1,0 +1,14 @@
+# Points Grafana at the mounted dashboard directory. Editing a provisioned
+# dashboard in the browser is allowed and lost when the file changes or
+# Grafana restarts, because the file in git is the source of truth.
+apiVersion: 1
+providers:
+  - name: workshop
+    orgId: 1
+    folder: Workshop
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana-dashboards

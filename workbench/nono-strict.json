@@ -1,0 +1,126 @@
+{
+  "meta": {
+    "name": "agentic-workshop-infrastructure-strict",
+    "version": "1.0.0",
+    "description": "nono.json, plus two limits. Network: only Anthropic (nono's network profile minimal), the Go module proxy and the Kubernetes schemas used by just check, the cluster ports on 127.0.0.1, and 7070, the debug MCP that just debug forwards. Login: /login inside the sandbox works as usual, but nono captures the OAuth token response and hands the sandbox a phantom token (sk-ant-oat01-nono-<64 hex>: Claude recognises its login by the sk-ant-oat prefix, nono- marks the phantom); the real token stays in nono's state directory; nono decrypts TLS to api.anthropic.com and swaps the phantom for the real token there (no base URL or token variable needed). listen_port 0: /login first starts a callback server on a kernel-chosen port on 127.0.0.1 and aborts if it cannot; without a browser in the sandbox you log in through the printed link and paste the code. Costs: nono intercepts TLS for these hosts, every new host is a denial plus an edit here, and the agent may listen on a random port (the sandbox limits the port, not the address: the host firewall decides who can connect). Shares .claude-home/ with nono.json: delete .claude-home/.credentials.json before the first strict login, because nono passes a real token through unchanged."
+  },
+  "extends": "default",
+  "groups": {
+    "include": [
+      "deny_credentials",
+      "deny_shell_history",
+      "nix_runtime",
+      "system_read_linux_core",
+      {
+        "name": "linux_sysfs_read",
+        "when": "linux"
+      },
+      "unlink_protection"
+    ]
+  },
+  "linux": { "af_unix_mediation": "pathname" },
+  "security": {
+    "signal_mode": "isolated",
+    "capability_elevation": false
+  },
+  "filesystem": {
+    "allow": [
+      "$WORKDIR",
+      "$WORKDIR/../.git"
+    ],
+    "read": [
+      "$WORKDIR/.."
+    ],
+    "unix_socket_subtree_bind": [
+      "$TMPDIR"
+    ],
+    "deny": [
+      { "path": "/private/tmp/com.apple.launchd.*", "when": "macos" }
+    ]
+  },
+  "network": {
+    "block": false,
+    "network_profile": "minimal",
+    "allow_domain": [
+      "proxy.golang.org",
+      "sum.golang.org",
+      "raw.githubusercontent.com"
+    ],
+    "open_port": [
+      6550,
+      3000,
+      9090,
+      3100,
+      3200,
+      4040,
+      8080,
+      8081,
+      7070
+    ],
+    "listen_port": [0]
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "environment": {
+    "deny_vars": [
+      "SSH_AUTH_SOCK",
+      "SECRET_TOKEN",
+      "ANTHROPIC_API_KEY"
+    ]
+  },
+  "open_urls": {
+    "allow_origins": [
+      "https://claude.ai",
+      "https://claude.com",
+      "https://api.anthropic.com",
+      "https://platform.claude.com"
+    ],
+    "allow_localhost": true
+  },
+  "diagnostics": {
+    "suppress_system_services": [
+      "forbidden-exec-sugid"
+    ]
+  },
+  "credential_providers": {
+    "claude_code": {
+      "type": "oauth_capture",
+      "token_endpoints": [
+        {
+          "host": "https://platform.claude.com",
+          "path": "/v1/oauth/token",
+          "response_fields": [
+            {
+              "path": "access_token",
+              "kind": "opaque",
+              "format": "sk-ant-oat01-nono-{}"
+            },
+            {
+              "path": "refresh_token",
+              "kind": "opaque"
+            },
+            {
+              "path": "id_token",
+              "kind": "jwt"
+            }
+          ],
+          "request_body": "auto",
+          "request_nonce_fields": [
+            "access_token",
+            "refresh_token"
+          ]
+        }
+      ],
+      "api_hosts": [
+        "https://api.anthropic.com"
+      ]
+    }
+  },
+  "credential_routes": [
+    {
+      "name": "claude_code_oauth",
+      "provider": "claude_code"
+    }
+  ]
+}

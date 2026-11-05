@@ -1,0 +1,306 @@
+# Every command of the workshop. `just` lists them.
+#
+# Two worlds of credentials:
+#   .kubeconfig  read-only (RBAC "view"), inside the repo, used by everyone
+#                and everything, the sandboxed agent included.
+#   credentials  admin kubeconfig and push key, outside the repo, where the
+#                sandbox reaches nothing. `up`, `debug` and `git push` use them.
+# Every change to the cluster goes through git: commit, then `git push cluster`.
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+# Shebang recipes run from a temp file. Inside the repo, because the sandbox
+# grants the repo and not $XDG_RUNTIME_DIR, where just would put it.
+set tempdir := ".cache"
+
+cluster := "infra-workshop"
+root := justfile_directory()
+# This folder's path in the repository. Written out, because git runs hooks
+# with GIT_DIR set, and then `git rev-parse --show-prefix` reports "".
+repo_prefix := "workbench/"
+# Every directory that becomes an image; the image is workshop/<last path part>.
+image_dirs := "scoring setup/loadgen"
+# The human's credentials: the admin kubeconfig and the key that pushes, that
+# is deploys. Outside the repo, because the sandbox grants the whole repo and
+# cannot carve a file out of it; nono.json grants nothing here.
+credentials := home_directory() / ".local" / "state" / "agentic-workshop-infrastructure"
+admin := credentials / "admin.kubeconfig"
+push_key := credentials / "push-key"
+# Kubernetes audit log, inside the k3s node container.
+audit_log := "/var/log/kubernetes/audit.log"
+# Pinned by digest, so every laptop runs the same Kubernetes; kubeconform
+# validates against the same version.
+k3s := "rancher/k3s:v1.36.5-k3s1@sha256:057cfd5a9d51b89f1f0ee139c28d5d5fdd5aa7ddeac2742a0ba90c6dbc0329bb"
+k8s_version := "1.36.5"
+# The Docker volume that holds the cluster's images. It outlives `just down`,
+# so a new cluster downloads nothing; ../prepare fills it before the workshop.
+image_cache := cluster + "-image-cache"
+
+export KUBECONFIG := root / ".kubeconfig"
+
+[private]
+default:
+    @just --list --unsorted
+
+# ── cluster ──────────────────────────────────────────────────────────────────
+
+# Create the cluster, Argo CD and the git server, then deploy main.
+up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${ARGOCD_INSTALL:?run inside nix develop}"
+    # A key of its own, so the workshop needs nothing from ~/.ssh. No
+    # passphrase: the sandbox boundary protects it, not a prompt.
+    # The git server learns its admin key once, on first start, so a cluster
+    # whose key is gone cannot be pushed to again.
+    if [[ ! -f {{push_key}} ]] && k3d cluster get {{cluster}} >/dev/null 2>&1; then
+      echo "cluster {{cluster}} exists, but its push key {{push_key}} is gone: run just down, then just up" >&2
+      exit 1
+    fi
+    mkdir -p {{credentials}}
+    chmod 700 {{credentials}}
+    [[ -f {{push_key}} ]] || ssh-keygen -q -t ed25519 -N '' -C workshop-push -f {{push_key}}
+
+    # The kubelet's default eviction starts at 85 % disk use and would leave
+    # every pod Pending on a well-filled laptop; 99 % keeps it as a last resort.
+    # Ports bind to 127.0.0.1: Grafana is admin/admin and every telemetry API
+    # is unauthenticated, which must not reach the workshop Wi-Fi.
+    if ! k3d cluster get {{cluster}} >/dev/null 2>&1; then
+      k3d cluster create {{cluster}} --image {{k3s}} \
+        --api-port 127.0.0.1:6550 \
+        --k3s-arg "--disable=traefik@server:0" \
+        --k3s-arg "--kubelet-arg=eviction-hard=imagefs.available<1%,nodefs.available<1%@server:0" \
+        --k3s-arg "--kubelet-arg=eviction-minimum-reclaim=imagefs.available=1%,nodefs.available=1%@server:0" \
+        -p "127.0.0.1:3000:30000@server:0" \
+        -p "127.0.0.1:9090:30090@server:0" \
+        -p "127.0.0.1:3100:30100@server:0" \
+        -p "127.0.0.1:3200:30200@server:0" \
+        -p "127.0.0.1:4040:30400@server:0" \
+        -p "127.0.0.1:8080:30080@server:0" \
+        -p "127.0.0.1:8081:30081@server:0" \
+        -p "127.0.0.1:23231:30231@server:0" \
+        --volume "{{image_cache}}:/var/lib/rancher/k3s/agent/containerd@server:0" \
+        --volume "{{root}}/setup/audit-policy.yaml:/etc/rancher/k3s/audit-policy.yaml@server:0" \
+        --k3s-arg "--kube-apiserver-arg=audit-policy-file=/etc/rancher/k3s/audit-policy.yaml@server:0" \
+        --k3s-arg "--kube-apiserver-arg=audit-log-path={{audit_log}}@server:0" \
+        --k3s-arg "--kube-apiserver-arg=audit-log-maxsize=50@server:0" \
+        --k3s-arg "--kube-apiserver-arg=audit-log-maxbackup=1@server:0" \
+        --kubeconfig-update-default=false --wait
+    fi
+    k3d kubeconfig get {{cluster}} > {{admin}}
+    chmod 600 {{admin}}
+    a="kubectl --kubeconfig {{admin}}"
+
+    # Two field managers, so server-side apply merges both sets of argocd-cm
+    # keys; with one manager, the second apply drops the first one's keys.
+    $a apply --server-side --field-manager=workshop -k setup/bootstrap
+    $a -n git create configmap git-admin-keys --from-literal=keys="$(cat {{push_key}}.pub)" --dry-run=client -o yaml | $a apply --server-side -f -
+    $a -n argocd apply --server-side --force-conflicts -f "$ARGOCD_INSTALL" >/dev/null
+
+    # The token controller fills the secret asynchronously.
+    until [[ -n $($a -n kube-system get secret agent-token -o jsonpath='{.data.token}') ]]; do sleep 1; done
+    server=$($a config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+    ca=$($a -n kube-system get secret agent-token -o jsonpath='{.data.ca\.crt}')
+    token=$($a -n kube-system get secret agent-token -o jsonpath='{.data.token}' | base64 -d)
+    umask 077
+    cat > {{root}}/.kubeconfig <<EOF
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: {{cluster}}
+        cluster: {server: "$server", certificate-authority-data: "$ca"}
+    users:
+      - name: agent
+        user: {token: "$token"}
+    contexts:
+      - name: {{cluster}}-view
+        context: {cluster: {{cluster}}, user: agent}
+    current-context: {{cluster}}-view
+    EOF
+
+    # Deploy is `git push cluster`: main goes to main, through the hooks.
+    # The git server's host key is new with every cluster, so it is pinned in
+    # a repo-local file.
+    # 127.0.0.1, not localhost: k3d binds IPv4 only, and localhost may be ::1.
+    $a -n git rollout status deploy/soft-serve --timeout=3m
+    # A ready pod is not yet a routed node port; retry for up to a minute.
+    for _ in $(seq 60); do
+      ssh-keyscan -p 23231 127.0.0.1 2>/dev/null > {{root}}/.known_hosts && break
+      sleep 1
+    done
+    [[ -s {{root}}/.known_hosts ]] || { echo "git server not reachable on 127.0.0.1:23231" >&2; exit 1; }
+    # The ssh command is part of the cluster remote's URL (git's ext::
+    # transport, %S is git-upload-pack or git-receive-pack), so it applies to
+    # this remote only; core.sshCommand would also take over the remote you
+    # cloned from. -F /dev/null: no ssh config, ssh-agent or other key of yours
+    # takes part, so the push works the same on every laptop and only with
+    # push-key.
+    url="ext::ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityAgent=none -o UserKnownHostsFile={{root}}/.known_hosts -i {{push_key}} -p 23231 127.0.0.1 %S /workshop.git"
+    if git remote get-url cluster >/dev/null 2>&1; then
+      git remote set-url cluster "$url"
+    else
+      git remote add cluster "$url"
+    fi
+    git config remote.cluster.push refs/heads/main:refs/heads/main
+    # git refuses ext:: unless allowed; `user` allows it for commands you
+    # type, never for a URL a submodule brings in.
+    git config protocol.ext.allow user
+    # Relative to the top of the repository, where git runs its hooks.
+    git config core.hooksPath workbench/.githooks
+    git push cluster
+
+    $a apply --server-side -f setup/bootstrap/application.yaml
+    echo "waiting for Argo CD to sync deploy/ (first run pulls images, several minutes)"
+    $a -n argocd wait application/workshop --for=jsonpath='{.status.sync.status}'=Synced --timeout=10m
+    $a -n argocd wait application/workshop --for=jsonpath='{.status.health.status}'=Healthy --timeout=10m
+    just urls
+
+# Keeps the image cache, so the next `just up` reuses the downloaded images.
+# To delete it: docker volume rm infra-workshop-image-cache
+# Delete the cluster, both kubeconfigs and the push key.
+down:
+    k3d cluster delete {{cluster}}
+    rm -rf {{credentials}}
+    rm -f {{root}}/.kubeconfig {{root}}/.known_hosts
+
+# Print the address of every service.
+urls:
+    @echo "Argo CD     http://localhost:8080   (read-only, no login)"
+    @echo "Grafana     http://localhost:3000   (admin/admin)"
+    @echo "Prometheus  http://localhost:9090"
+    @echo "Loki        http://localhost:3100   (API only, browse logs in Grafana > Explore)"
+    @echo "Tempo       http://localhost:3200   (API only, browse traces in Grafana > Explore)"
+    @echo "Pyroscope   http://localhost:4040"
+    @echo "Traffic     http://localhost:8081/traffic"
+
+# The log stays in the k3s node and needs Docker to read, which the sandbox
+# never gets: the agent cannot read or rewrite its own trail.
+# Show who did what in the cluster: agent, you, Argo CD.
+audit:
+    @docker exec k3d-{{cluster}}-server-0 cat {{audit_log}} | jq -r '[.requestReceivedTimestamp[11:19], (.user.username | sub("^system:serviceaccount:"; "")), .verb, (.objectRef.resource + (if .objectRef.subresource then "/" + .objectRef.subresource else "" end)), (.objectRef.namespace // "-"), (.objectRef.name // "-"), .responseStatus.code] | @tsv'
+
+# Show the pods and Argo CD's sync state.
+status:
+    kubectl get pods -A
+    kubectl -n argocd get application workshop -o jsonpath='{"sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{"  revision: "}{.status.sync.revision}{"\n"}'
+
+# ── gitops ───────────────────────────────────────────────────────────────────
+
+# Image tag of <dir>: the git tree hash of its staged content.
+[private]
+tree dir:
+    @git rev-parse --short=12 "$(git write-tree --prefix={{repo_prefix}}{{dir}}/)"
+
+[private]
+pinned name:
+    @yq '.images[] | select(.name == "workshop/{{name}}") | .newTag' {{root}}/deploy/kustomization.yaml
+
+# Pin deploy/ to the staged scoring/ and setup/loadgen/, and stage it.
+pin:
+    for dir in {{image_dirs}}; do yq -i '(.images[] | select(.name == "workshop/'${dir##*/}'")).newTag = "'$(just tree $dir)'"' deploy/kustomization.yaml; done
+    git add deploy/kustomization.yaml
+    @git --no-pager diff --cached --stat -- deploy/kustomization.yaml
+
+# Needs Docker, so it runs on the host (pre-push hook), never in the sandbox.
+# Build every image deploy/ uses into the cluster.
+images:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    refs=()
+    for dir in {{image_dirs}}; do
+      name=${dir##*/} tag=$(just pinned ${dir##*/})
+      # From the tree object, not the working directory: the tag cannot name
+      # anything but the content it was computed from.
+      # From the top of the repository: run in workbench/, git archive would
+      # archive only a workbench/ inside the tree, which is empty.
+      git -C {{root}}/.. archive --format=tar "$tag" | docker build -q -t "workshop/$name:$tag" - >/dev/null
+      refs+=("workshop/$name:$tag")
+    done
+    k3d image import -c {{cluster}} "${refs[@]}"
+
+# Run the quality gate; the git hooks run them on every commit and push.
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{root}}
+    mkdir -p .cache/kubeconform
+    echo "── pins: deploy/ runs the staged code"
+    for dir in {{image_dirs}}; do
+      name=${dir##*/} want=$(just tree $dir) have=$(just pinned ${dir##*/})
+      [[ $want == "$have" ]] || { echo "workshop/$name is pinned to $have, staged $dir/ is $want: run just pin" >&2; exit 1; }
+    done
+    echo "── render"
+    kustomize build deploy > .cache/rendered.yaml
+    echo "── schema (Kubernetes {{k8s_version}})"
+    kubeconform -strict -summary -kubernetes-version {{k8s_version}} -cache .cache/kubeconform .cache/rendered.yaml
+    echo "── lint"
+    kube-linter lint --config .kube-linter.yaml .cache/rendered.yaml
+    echo "── go"
+    for dir in {{image_dirs}}; do (cd $dir && go vet ./... && go test ./...); done
+    echo "── debug MCP: loopback only"
+    # The debug MCP has no login. In the pod it listens on loopback, and only
+    # `kubectl port-forward` reaches it: no Service or containerPort may open it.
+    # Absent is fine: that is how you turn the debug MCP off.
+    if yq -e 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[]? | select(.name == "DEBUG_MCP_ADDR") | select(.value | test("^127\\.0\\.0\\.1:") | not)' .cache/rendered.yaml >/dev/null 2>&1; then
+      echo "DEBUG_MCP_ADDR in deploy/ must be 127.0.0.1:<port>" >&2; exit 1
+    fi
+    if yq -e '[.. | select(has("port") or has("containerPort") or has("targetPort")) | (.port, .containerPort, .targetPort)] | any_c(. == 7070)' .cache/rendered.yaml >/dev/null 2>&1; then
+      echo "deploy/ exposes the debug MCP port 7070" >&2; exit 1
+    fi
+
+# Quiet on purpose: an echoed curl would split each "label: value" line.
+# Print one metric, one log line and one trace of scoring.
+signals:
+    @echo -n "metric: "
+    @curl -sG http://localhost:9090/api/v1/query \
+      --data-urlencode 'query=sum(go_goroutine_count{service_name="scoring"})' \
+      | jq -e -r '.data.result[0].value[1]'
+    @echo -n "log:    "
+    @curl -sG http://localhost:3100/loki/api/v1/query_range \
+      --data-urlencode 'query={service_name="scoring"}' --data-urlencode limit=1 \
+      | jq -e -r '.data.result[0].values[0][1]'
+    @echo -n "trace:  "
+    @curl -sG http://localhost:3200/api/search \
+      --data-urlencode 'q={resource.service.name="scoring"}' --data-urlencode limit=1 \
+      --data-urlencode "start=$(( $(date +%s) - 900 ))" --data-urlencode "end=$(date +%s)" \
+      | jq -e -r '.traces[0].traceID'
+
+# ── debug ────────────────────────────────────────────────────────────────────
+
+# With the admin kubeconfig: the agent's cannot port-forward. Runs until Ctrl-C;
+# `just audit` shows the forward. Then: just claude --mcp-config setup/debug-mcp.json
+# Open the scoring pod's debug MCP on 127.0.0.1:7070.
+debug:
+    kubectl --kubeconfig {{admin}} -n demo port-forward deploy/scoring 7070:7070
+
+# ── sandbox ──────────────────────────────────────────────────────────────────
+
+# `just profile=nono-strict.json claude`: filtered network, phantom login token.
+profile := "nono.json"
+skills := "true"
+history := root / ".sandbox_history"
+gitconfig := root / ".cache" / "sandbox.gitconfig"
+
+# Your git config stays outside: its includes, aliases and helpers may point anywhere.
+# Copy your git name and email for commits in the sandbox.
+[private]
+sandbox-gitconfig:
+    @rm -f {{gitconfig}}
+    @git config --file {{gitconfig}} user.name "$(git config user.name)"
+    @git config --file {{gitconfig}} user.email "$(git config user.email)"
+
+# --norc: the sandbox denies your shell config anyway. --no-diagnostics: no grant picker.
+# Open a shell in the agent's sandbox.
+sandbox: sandbox-gitconfig
+    touch {{history}}
+    GIT_CONFIG_GLOBAL={{gitconfig}} HISTFILE={{history}} PS1='sandbox \$ ' nono run --no-diagnostics -p {{root}}/{{profile}} --allow-file {{history}} -- bash --noprofile --norc
+
+# Config and login live in .claude-home/, apart from your host login (macOS too:
+# without Keychain access claude writes .credentials.json). skills=false omits skills/.
+# Start Claude Code in the sandbox, with skills/.
+[positional-arguments]
+claude *args: sandbox-gitconfig
+    {{root}}/setup/scripts/claude-home-seed {{root}}/.claude-home {{root}}
+    # A copy, so the session cannot edit the shared skills behind git's back.
+    rm -rf {{root}}/.claude-home/skills
+    if [[ {{skills}} == true ]]; then cp -r {{root}}/skills {{root}}/.claude-home/skills; fi
+    GIT_CONFIG_GLOBAL={{gitconfig}} CLAUDE_CONFIG_DIR={{root}}/.claude-home nono run --no-diagnostics -p {{root}}/{{profile}} -- claude "$@"

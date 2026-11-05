@@ -1,0 +1,6 @@
+# Lint rules for the rendered deploy/. Starts from kube-linter's defaults; an
+# object that cannot meet one names the check and the reason in an
+# ignore-check.kube-linter.io/<check> annotation, so every exception is
+# visible where it applies.
+checks:
+  addAllBuiltIn: false

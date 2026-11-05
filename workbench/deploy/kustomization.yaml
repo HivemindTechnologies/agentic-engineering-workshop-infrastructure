@@ -1,0 +1,17 @@
+# Declared state of the cluster. Argo CD renders this directory from the
+# in-cluster git server and applies it. A change reaches the cluster only as a
+# commit on main pushed with `git push cluster`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - observability
+  - demo
+  - traffic
+# Tags are git tree hashes of scoring/ and setup/loadgen/, written by `just pin` and
+# checked by `just check`. k3d has no registry: `just images` builds each tag
+# from its git tree and imports it into the node.
+images:
+  - name: workshop/loadgen
+    newTag: 48b97ea986ee
+  - name: workshop/scoring
+    newTag: c9d90ab56b08

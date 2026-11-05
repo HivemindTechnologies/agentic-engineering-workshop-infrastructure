@@ -1,0 +1,39 @@
+# The workload pushes its own signals over OTLP, but container memory, CPU and
+# the kubelet's kill decisions are only visible from the node. This collector
+# reads the kubelet and the cluster event stream and forwards both into the
+# same lgtm backend, so all signals are queried in one place.
+receivers:
+  # The kubelet serves its stats over a node-local self-signed certificate,
+  # which no cluster CA vouches for, hence the skipped verification.
+  kubelet_stats:
+    auth_type: serviceAccount
+    endpoint: https://${env:NODE_NAME}:10250
+    insecure_skip_verify: true
+    collection_interval: 15s
+    metric_groups: [container, pod, node]
+  k8s_events: {}
+processors:
+  batch: {}
+  k8s_attributes: {}
+  # Events carry no service of their own, so Loki would file them under
+  # "unknown_service". Naming the stream makes it queryable.
+  resource:
+    attributes:
+      - key: service.name
+        value: kubernetes-events
+        action: upsert
+exporters:
+  otlp_grpc:
+    endpoint: lgtm.observability.svc.cluster.local:4317
+    tls:
+      insecure: true
+service:
+  pipelines:
+    metrics:
+      receivers: [kubelet_stats]
+      processors: [k8s_attributes, batch]
+      exporters: [otlp_grpc]
+    logs:
+      receivers: [k8s_events]
+      processors: [resource, batch]
+      exporters: [otlp_grpc]

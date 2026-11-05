@@ -1,0 +1,45 @@
+# The identity behind .kubeconfig, the only cluster credential inside the
+# repo and so the only one the sandbox can read. Bound to the built-in "view"
+# role: get, list and watch on most objects, no secrets, no writes. Changes go
+# through git; this credential cannot make them.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent
+  namespace: kube-system
+---
+# A long-lived token, so .kubeconfig stays valid for the whole workshop.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-token
+  namespace: kube-system
+  annotations:
+    kubernetes.io/service-account.name: agent
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: agent
+    namespace: kube-system
+---
+# "view" knows nothing of Argo CD's resources. This aggregates them into it,
+# so `kubectl get applications -n argocd` answers "is my push deployed?".
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argocd-view
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications, appprojects]
+    verbs: [get, list, watch]

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# A push is a deploy. The quality gate runs on the working tree, so the tree must equal
+# the commit being pushed; then every image deploy/ names is built into the
+# cluster, so Argo CD never syncs a tag the node cannot run.
+set -euo pipefail
+# Only a push to the cluster deploys; pushes to other remotes need no quality gate.
+[[ $1 == cluster ]] || exit 0
+[[ -n ${IN_NIX_SHELL:-} ]] || { echo "pre-push: run git inside nix develop, the quality gate needs its tools" >&2; exit 1; }
+git diff --quiet HEAD -- || { echo "pre-push: uncommitted changes; commit or stash them, the push deploys main" >&2; exit 1; }
+[[ $(git rev-parse HEAD) == $(git rev-parse main) ]] || { echo "pre-push: check out main, the push deploys main" >&2; exit 1; }
+# git runs hooks from the top of the repository, above the justfile.
+cd "$(dirname "$0")/.."
+just check
+just images

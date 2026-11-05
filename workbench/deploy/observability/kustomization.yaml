@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+resources:
+  - namespace.yaml
+  - lgtm.yaml
+  - collector.yaml
+configMapGenerator:
+  # Grafana rescans this directory every 30 s, and the volume is mounted whole
+  # (no subPath), so the kubelet updates it in place. A fixed name keeps the
+  # pod running: a restart would discard every stored signal.
+  - name: grafana-dashboards
+    files:
+      - dashboards/scoring.json
+    options:
+      disableNameSuffixHash: true
+  # Grafana reads provisioning at startup only. The hash suffix renames the
+  # ConfigMap on every change, which rolls the pod, so a running Grafana never
+  # disagrees with these files. The cost: all stored telemetry is lost.
+  - name: grafana-provisioning
+    files:
+      - grafana/dashboards.yaml
+      - alerts.yaml=alerts/scoring.yaml
+  - name: collector
+    files:
+      - collector/config.yaml

@@ -1,0 +1,682 @@
+/* HIVEMIND workshop theme — simplified fork of the Lambda World 2025 deck's
+   hivemind.css. Removed: dual-presenter initials, conference-info specifics,
+   the combiner-table demo styling. Kept: brand palette, GT fonts, bracketed
+   headings (see hivemind.js), footer logo, code / mermaid / blockquote styling.
+
+   reveal-md serves a custom --css file from /_assets/theme/hivemind.css (both
+   when serving and in the static export), so the font url()s below climb two
+   levels back to /assets/fonts/. export-html also copies assets/ into dist/. */
+
+/* === Fonts === */
+@font-face {
+  font-family: 'GT America';
+  src: url('../../assets/fonts/GT America/GT-America-Standard-Light.woff2') format('woff2'),
+       url('../../assets/fonts/GT America/GT-America-Standard-Light.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GT America';
+  src: url('../../assets/fonts/GT America/GT-America-Standard-Medium.woff2') format('woff2'),
+       url('../../assets/fonts/GT America/GT-America-Standard-Medium.woff') format('woff');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GT Pressura';
+  src: url('../../assets/fonts/GT Pressura/GT-Pressura-Bold.woff2') format('woff2'),
+       url('../../assets/fonts/GT Pressura/GT-Pressura-Bold.woff') format('woff');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* === Palette === */
+:root {
+  --hivemind-green: #3ec64b;
+  --hivemind-red: #f93030;
+  --hivemind-black: #000000;
+  --hivemind-dark-gray: #333333;
+  --hivemind-medium-gray: #666666;
+  --hivemind-light-gray: #f4f4f4;
+  --hivemind-white: #ffffff;
+  --hivemind-green-dark: #2a8c34;
+  --accent-cyan: #00c5db;
+  --hivemind-red-light: #ffd5d5;
+  --hivemind-cyan-light: #bddae0;
+  --hivemind-green-light: #e3f5e4;
+
+  /* Side gutter of every slide. Shared by the on-screen rule and the print
+     rule below, so browser and PDF put text on the same left edge.
+     64px is 5% of the 1280px canvas: text keeps off the screen edge. */
+  --slide-padding-x: 64px;
+
+  /* reveal-md injects this file AFTER the bundled 'black' theme, so override
+     reveal's own theme variables here to get the HIVEMIND light ground. */
+  --r-background-color: #ffffff;
+  --r-main-color: #333333;
+  --r-heading-color: #000000;
+  --r-link-color: #f93030;
+  --r-link-color-hover: #f93030;
+  --r-link-color-dark: #d42020;
+  --r-selection-background-color: #bddae0;
+  --r-selection-color: #000000;
+}
+
+/* === Light ground === */
+/* The 'black' theme paints .reveal-viewport (#191919) and each .slide-background
+   dark, and sets .reveal { color:#fff }. Force all of them light. */
+html,
+body,
+.reveal-viewport,
+.reveal {
+  background: var(--hivemind-white) !important;
+  background-color: var(--hivemind-white) !important;
+}
+.reveal {
+  color: var(--hivemind-dark-gray);
+}
+.reveal .backgrounds .slide-background,
+.reveal .slide-background-content {
+  background-color: var(--hivemind-white);
+}
+
+/* === Base === */
+body {
+  font-family: 'GT America', 'Helvetica Neue', Arial, sans-serif;
+  color: var(--hivemind-dark-gray);
+  background: var(--hivemind-white);
+}
+
+.reveal .slides {
+  text-align: left;
+}
+/* Pad the real slides (flat sections and vertical children), never the .stack
+   wrapper — padding on the abs-positioned stack pushes its children out. */
+.reveal .slides section {
+  box-sizing: border-box;
+}
+.reveal .slides > section:not(.stack),
+.reveal .slides > section > section {
+  padding: 0 var(--slide-padding-x);
+}
+
+/* === Print / PDF === */
+/* The vendored reveal print stylesheet zeroes slide padding and forces
+   display:block on every section (theme/print-pdf.css). Both rules carry
+   !important and beat the inline styles .bin/_print.mjs sets, so restore the
+   gutter here and keep the title slide a centering flex box. */
+html.reveal-print .reveal .slides section:not(.stack) {
+  padding: 0 var(--slide-padding-x) !important;
+}
+html.reveal-print .reveal .slides section.title-slide {
+  display: flex !important;
+  height: 100% !important;
+}
+
+/* Lesson / exercise title-slide intro paragraph — the long-form line that sits
+   under the minimalist `Lesson CE1` / `Exercise CE1` header and wraps freely.
+   h1+p only ever occurs on a lesson title slide; the exercise heading is the
+   first child of its (flat) section. */
+.reveal .slides h1 + p,
+.reveal .slides > section > h2:first-child + p {
+  font-size: 0.62em;
+  line-height: 1.4;
+  max-width: 34em;
+  margin-top: 0.6em;
+  color: var(--hivemind-dark-gray);
+}
+
+/* === Headings === */
+.reveal h1,
+.reveal h2,
+.reveal h3 {
+  font-weight: bold;
+  margin-bottom: 0.3em;
+  color: var(--hivemind-black);
+  text-transform: none;
+  font-family: 'GT Pressura', 'Courier New', Courier, monospace;
+  max-width: 100%;
+  white-space: normal;   /* headers are short codes now — wrap, don't overflow */
+  overflow-wrap: break-word;
+}
+.reveal h1 { font-size: 2.1em; color: var(--hivemind-black); }
+/* 1.4em keeps every h2 on one line at 1280px, brackets included. */
+.reveal h2 { font-size: 1.4em; color: var(--hivemind-red); }
+.reveal h3 { font-size: 1.4em; color: var(--hivemind-red); }
+.reveal h1 em { color: var(--accent-cyan); font-weight: bold; font-style: normal; }
+.reveal h2 em { color: var(--hivemind-red); font-weight: bold; font-style: normal; }
+.reveal h1::before, .reveal h1::after { content: none !important; }
+
+/* === Body text and lists === */
+.reveal p {
+  color: var(--hivemind-medium-gray);
+  font-size: 0.5em;
+  line-height: 1.2;
+}
+.reveal ul,
+.reveal ol {
+  display: block;
+  color: var(--hivemind-medium-gray);
+  line-height: 1.2;
+  margin-left: 1em;
+  margin-bottom: 0.4em;
+  margin-top: 0.4em;
+  padding-right: 2em;
+}
+.reveal li { margin-bottom: 0.3em; font-size: 0.5em; }
+.reveal li li { font-size: 0.7em; }
+/* A slide of text only (no image, table or code) has room to spare: the
+   default 0.5em leaves its bottom half empty. */
+.reveal .text-slide li, .reveal .text-slide p { font-size: 0.62em; }
+.reveal li code { color: var(--hivemind-red); }
+/* Inline code: the monospace fallback has a much larger x-height than the
+   light body font, so at the same size it shouts. Smaller and on a light
+   background, it reads as one token inside the sentence. */
+.reveal :not(pre) > code {
+  font-size: 0.88em;
+  background: var(--hivemind-light-gray);
+  padding: 0.05em 0.25em;
+  border-radius: 3px;
+}
+
+.reveal .highlight { color: var(--hivemind-red); font-weight: bold; }
+
+/* Two-column helper (e.g. refine-1 showcase TOC pairs) */
+.two-column { display: flex; justify-content: space-between; align-items: flex-start; gap: 1em; width: 100%; }
+.column { width: 48%; min-width: 0; }
+.two-column .column pre { margin-top: 0.4em; }
+.two-column .column pre code {
+  font-size: 0.48em;
+  /* Without it the code inherits the body's line height in px, about 2.5x its own
+     font size. 1.1 and 400px fit the longest worktree tree, Quality Gates 4's
+     30 lines, without a scrollbar and above the footer logo. */
+  line-height: 1.1;
+  max-height: 400px;
+  padding: 0.4em 0.6em;
+}
+/* Reproduce path under a TOC column — stay inside the column width. */
+.reveal .reproduce {
+  margin: 0.35em 0 0;
+  font-size: 0.28em;
+  line-height: 1.25;
+  color: var(--hivemind-dark-gray);
+}
+.reveal .reproduce code {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: 1em;
+}
+
+/* === Links === */
+.reveal a { color: var(--hivemind-red); text-decoration: none; }
+.reveal a:hover { text-decoration: underline; }
+
+/* === Code === */
+.reveal pre { width: 100%; margin: 0; box-shadow: none; }
+.reveal pre code {
+  background: var(--hivemind-light-gray);
+  color: var(--hivemind-dark-gray);
+  padding: 0.5em 1em;
+  border: 1px solid var(--hivemind-light-gray);
+  border-radius: 4px;
+  font-size: 0.7em;
+  max-height: 450px;
+  overflow-y: auto;
+  /* Steckbrief prompts and long paths: wrap so participants can read without hovering */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+/* Combined Steckbrief slide: reserve room under the prompt for observations */
+.reveal .slides section.steckbrief-prompt-obs pre code {
+  max-height: 11.5em;
+}
+.reveal .slides section.steckbrief-prompt-obs ul {
+  max-height: 6.5em;
+  overflow-y: auto;
+}
+/* Split Steckbrief slides: each block can use most of the slide */
+.reveal .slides section.steckbrief-prompt pre code {
+  max-height: 24em;
+}
+.reveal .slides section.steckbrief-obs ul {
+  max-height: 18em;
+  overflow-y: auto;
+}
+.hljs { display: block; overflow-x: auto; padding: 0.5em; background: var(--hivemind-light-gray); color: var(--hivemind-black); }
+/* Steckbrief prompts / trees: no language colouring — participants read verbatim text */
+.reveal pre code.language-plaintext,
+.reveal pre code.language-plaintext span {
+  color: var(--hivemind-dark-gray) !important;
+  font-weight: normal !important;
+  font-style: normal !important;
+}
+.hljs-comment, .hljs-quote { color: var(--hivemind-green-dark); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-subst { color: var(--hivemind-red); font-weight: bold; }
+.hljs-string, .hljs-doctag, .hljs-regexp { color: var(--hivemind-green); }
+.hljs-number, .hljs-literal { color: var(--accent-cyan); }
+.hljs-title, .hljs-section, .hljs-selector-id { color: var(--hivemind-red); font-weight: bold; }
+.hljs-type, .hljs-class .hljs-title, .hljs-built_in { color: var(--accent-cyan); }
+.hljs-attr, .hljs-tag, .hljs-name { color: var(--hivemind-red); }
+.hljs-meta { color: var(--hivemind-medium-gray); }
+/* Braces, commas and colons: reveal-md's bundled highlight theme greys them
+   almost to the background, so a JSON block reads as loose words. */
+.reveal pre code .hljs-punctuation { color: var(--hivemind-dark-gray); }
+
+/* === Blockquote === */
+.reveal blockquote {
+  border-left: 4px solid var(--hivemind-red);
+  padding-left: 1em;
+  background-color: var(--hivemind-light-gray);
+  margin: 0 0 0.5em 0;
+  font-style: italic;
+}
+/* A prompt to paste, quoted inside an exercise step: the li already sets the font size,
+   so the inner p must not shrink it again, and the margins stay tight. */
+.reveal li blockquote { margin: 0.2em 0; padding: 0.1em 0.6em; }
+.reveal li blockquote p { font-size: 1em; margin: 0; }
+
+/* === Tables (generic) === */
+/* Full width so a table with short cells spans the slide like every other table. */
+.reveal table { width: 100%; font-size: 0.5em; border-collapse: collapse; margin: 0.6em 0; }
+.reveal table th { text-align: left; color: var(--hivemind-red); border-bottom: 2px solid var(--hivemind-red); }
+/* Rows need air: dense option tables read as one block otherwise. */
+.reveal table td, .reveal table th { padding: 0.45em 0.6em; line-height: 1.3; }
+.reveal table tbody tr:nth-child(even) { background: #fafafa; }
+/* The table's own margin is in its 0.5em font, too tight before a list at full size. */
+.reveal table + ul { margin-top: 1.2em; }
+
+/* === Images === */
+/* Slides are left-aligned text (.reveal .slides { text-align: left }), so a bare
+   <img> would hug the left gutter. Every image here stands on its own line, so
+   make it a block and centre it with auto side margins; reveal's own center:true
+   then puts the heading+image+credit group in the middle of the slide. */
+.reveal img { display: block; max-height: 400px; max-width: 100%; margin: 0 auto; border: none; box-shadow: none; }
+
+/* === Slide numbers (bottom-left; size matches .presentation-title) === */
+.reveal .slide-number {
+  left: 1rem;
+  right: auto;
+  bottom: 1rem;
+  color: var(--hivemind-red);
+  font-family: 'GT Pressura', 'Courier New', Courier, monospace;
+  font-weight: bold;
+  font-size: 0.9rem;
+  line-height: 1;
+  background: transparent;
+  padding: 0;
+  z-index: 10;
+}
+
+/* === Footer brand (added by hivemind.js) === */
+.reveal .footer-brand {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+}
+.reveal .footer-brand img { height: 28px; width: auto; }
+
+/* === Deck title in footer (M3a: moved off top-right for progress chrome) === */
+.reveal .presentation-title {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  font-family: 'GT Pressura', 'Courier New', Courier, monospace;
+  font-size: 0.9rem;
+  color: var(--hivemind-medium-gray);
+  z-index: 10;
+}
+
+/* Nav arrows: scale the whole diamond (keep relative layout) and lift it
+   above the footer title. Keyboard is the main control. */
+.reveal .controls {
+  bottom: 2.75rem;
+  right: 0.75rem;
+  transform: scale(0.55);
+  transform-origin: bottom right;
+}
+
+/* === Progress chrome: the whole deck, a ☕ per break === */
+.reveal .deck-progress {
+  position: fixed;
+  top: 0.85rem;
+  left: 1.5rem;
+  right: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  z-index: 20;
+  font-family: 'GT Pressura', 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  color: var(--hivemind-medium-gray);
+  pointer-events: none;
+}
+.reveal .deck-progress.is-hidden { display: none; }
+/* Current block, under the bar's left end. */
+.reveal .deck-progress-title {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.2rem);
+  font-size: 1.25rem;
+  white-space: nowrap;
+}
+.reveal .deck-progress-index {
+  flex: 0 0 auto;
+  min-width: 3.5em;
+  font-variant-numeric: tabular-nums;
+  color: var(--hivemind-red);
+  font-weight: bold;
+}
+.reveal .deck-progress-bar {
+  flex: 1 1 auto;
+  position: relative;
+  height: 0.65rem;
+}
+/* Static full-width dashed underlay — never resized, so dashes do not crawl. */
+.reveal .deck-progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 0;
+  margin-top: -0.5px;
+  border-top: 1px dashed var(--hivemind-medium-gray);
+  opacity: 0.55;
+}
+/* Slightly thicker solid cover hides the dashes under elapsed progress. */
+.reveal .deck-progress-elapsed {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1.5px;
+  margin-top: -0.75px;
+  background: var(--accent-cyan, #00c5db);
+  z-index: 1;
+}
+.reveal .deck-progress-dots {
+  position: absolute;
+  inset: 0;
+}
+.reveal .deck-progress-dot {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -5px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-cyan, #00c5db);
+  background: #fff;
+  box-sizing: border-box;
+}
+.reveal .deck-progress-dot.is-elapsed,
+.reveal .deck-progress-dot.is-current {
+  border-color: var(--accent-cyan, #00c5db);
+  background: var(--accent-cyan, #00c5db);
+}
+.reveal .deck-progress-dot.is-remain {
+  border-color: var(--hivemind-medium-gray);
+  background: #fff;
+}
+/* A break on the global bar: the coffee cup sits on the track. Past breaks fade. */
+.reveal .deck-progress-break {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1rem;
+  line-height: 1;
+  z-index: 2;
+}
+.reveal .deck-progress-break.is-elapsed { opacity: 0.35; }
+html.reveal-print .reveal .deck-progress { display: none; }
+
+/* === Mermaid === */
+.mermaid { background: transparent; }
+.mermaid .node rect, .mermaid .node circle, .mermaid .node ellipse,
+.mermaid .node polygon, .mermaid .node path {
+  fill: var(--hivemind-cyan-light) !important;
+  stroke: var(--accent-cyan) !important;
+  stroke-width: 2px !important;
+}
+.mermaid .cluster rect {
+  fill: var(--hivemind-red-light) !important;
+  stroke: var(--hivemind-red) !important;
+  stroke-width: 2px !important;
+  opacity: 0.5 !important;
+}
+.mermaid .edgePath .path { stroke: var(--hivemind-dark-gray) !important; stroke-width: 2px !important; }
+.mermaid .arrowheadPath { fill: var(--hivemind-dark-gray) !important; stroke: var(--hivemind-dark-gray) !important; }
+.mermaid .edgeLabel, .mermaid .edgeLabel rect { background-color: var(--hivemind-white) !important; fill: var(--hivemind-white) !important; }
+.mermaid .label text { fill: var(--hivemind-black) !important; }
+
+/* === Title slide === */
+.title-slide {
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100% !important;
+  width: 100% !important;
+  text-align: center;
+}
+.title-container {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.title-slide .logos { display: flex; justify-content: center; align-items: center; gap: 2rem; margin-bottom: 2rem; }
+.title-slide .logo-hivemind { height: 55px; width: auto; }
+.title-slide .title { font-size: 3rem; color: #000; }
+.title-slide .subtitle { font-size: 1.6rem; color: #666; font-weight: normal; }
+.title-slide .meta { font-size: 1.1rem; color: #888; font-weight: normal; margin-top: 1.5rem; }
+
+/* A part's opening slide, rendered by build-deck: one column per block, one lesson
+   per line. A column is as wide as its grey block label while the slide has room;
+   when it has none (Part 2's four long labels), `auto` shrinks columns and the long
+   labels wrap. `start` keeps spare room out of the columns. */
+.reveal .agenda { display: grid; grid-auto-flow: column; grid-auto-columns: auto; justify-content: start; gap: 0 64px; margin-top: 0.4em; }
+/* A wrapped label is taller than its neighbours. A shared label row (subgrid), with
+   each label at its bottom, keeps every column's first lesson on one line. The
+   closing grid stacks several blocks per column and keeps plain flow. */
+.reveal .agenda:not(.closing) { grid-template-rows: auto auto; }
+.reveal .agenda:not(.closing) .agenda-col { display: grid; grid-row: span 2; grid-template-rows: subgrid; }
+.reveal .agenda:not(.closing) .agenda-block { align-self: end; }
+.reveal .agenda .agenda-block {
+  font-size: 0.48em; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--hivemind-medium-gray); margin: 0 0 0.15em;
+}
+.reveal .agenda ul { list-style: none; margin: 0; padding: 0; }
+.reveal .agenda li { font-size: 0.68em; line-height: 1.35; margin: 0; }
+
+/* Hand-drawn figures: drawings/*.excalidraw, exported from Excalidraw to
+   drawings/output/ and copied into assets/images/.
+   They carry the argument alone, so they get the whole slide. */
+/* Sized in px against reveal's 700px slide canvas, never in vh: reveal scales the
+   whole canvas by a transform, so a vh value gets multiplied by that scale and the
+   image ends up taller than the screen. 440px leaves room for the heading. */
+.reveal img.drawing { max-height: 440px; max-width: 88%; }
+/* Terminal screenshots on Setup slides: taller than comics, still fit the frame. */
+.reveal img.screenshot { max-height: 480px; max-width: 92%; }
+/* Attribution under a reused comic. Small and quiet, but on the slide itself:
+   every source we borrow from requires credit where the work is shown. */
+.reveal .credit { font-size: 0.42em; opacity: 0.55; margin: 0.4em 0 0; text-align: center; }
+/* One line under every exercise (added by .bin/build-deck): visible, but quieter than the steps. */
+.reveal .exercise-footer { font-size: 0.5em; opacity: 0.6; margin: 0.8em 0 0; }
+/* A comic carries its credit line, so it gets less height than a bare drawing. */
+.reveal img.comic { max-height: 390px; max-width: 80%; }
+/* A strip that accents a slide rather than carrying it, e.g. under the one-line
+   exercise slides of Spec 1 and Subagents 1. */
+.reveal img.comic.small { max-height: 300px; }
+/* A third-party plugin: logo left, name and install commands right, kept small so the
+   commands stay the content of the slide. */
+.reveal .plugin-row { display: flex; align-items: center; gap: 1.2em; margin-bottom: 0.4em; }
+.reveal .plugin-row > div { flex: 1; }
+.reveal .plugin-row p { margin: 0 0 0.3em; }
+.reveal img.plugin-logo { height: 100px; width: 100px; object-fit: contain; margin: 0; }
+/* A block divider opens a block: its title at title size over the part's agenda,
+   so the room sees where it is. The part's first divider also names the part. */
+.reveal .slides section.block-slide { text-align: center; }
+.reveal .block-slide h2 { font-size: 3rem; margin-top: 1em; }
+.reveal .block-slide .part-topics { font-size: 1.2rem; color: #666; }
+.reveal .block-slide .part-kicker { font-size: 1.1rem; color: var(--hivemind-medium-gray); margin-bottom: 0; }
+/* Divider slides centre the agenda; its names stay left-aligned. */
+.reveal .block-slide .agenda { justify-content: center; text-align: left; margin-top: 1em; }
+/* A break slide holds only its title over one large coffee cup. */
+.reveal .slides section.break-slide { text-align: center; }
+.reveal .break-slide h2 { font-size: 3rem; margin-top: 1em; }
+/* The selector outranks the lesson-intro rule (`h2:first-child + p`), which
+   would otherwise shrink the cup and pin it into a left 34em box. */
+.reveal .slides section.break-slide p.break-icon { font-size: 8rem; line-height: 1; margin-top: 0.3em; max-width: none; }
+/* Where are we: taught lessons and finished blocks pale, the current block green.
+   Pale, not medium grey: medium grey is too close to the body text to read as done. */
+.reveal .agenda li.done, .reveal .agenda-col.done .agenda-block { color: #b0b0b0; }
+.reveal .agenda-col.current .agenda-block { color: var(--hivemind-green-dark); font-weight: bold; }
+
+/* Closing slide, hand-written in each spine: the agenda grid again, each lesson
+   as the habit it replaces (struck through, grey) followed by its replacement. */
+.reveal .closing li { color: #000; }
+.reveal .closing s { color: var(--hivemind-medium-gray); }
+/* A column holding a second block needs air above that block's label. */
+.reveal .closing ul + .agenda-block { margin-top: 0.6em; }
+/* nowrap makes each column as wide as its longest line; at the base agenda size
+   the four columns can run past the slide's right border. */
+.reveal .closing { font-size: 0.88em; gap: 0 40px; }
+/* Without nowrap the grid shrinks the columns to fit and breaks pairs like
+   "kubectl apply git push" over two lines. */
+.reveal .closing li, .reveal .closing .agenda-block { white-space: nowrap; }
+
+/* Part 2's timetable, hand-written in its spine: Part 1 as one grey line, then
+   today's slots as stops on a vertical rail, a ☕ between each two. The rail is
+   the list's left border; each stop puts a dot on it, each cup sits on it. */
+.reveal .timetable { font-size: 0.6em; margin-top: 0.2em; }
+.reveal .timetable .tt-known { font-size: 0.75em; color: #b0b0b0; margin: 0 0 0.8em; }
+.reveal .timetable .tt-today {
+  font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--hivemind-green-dark); font-weight: bold; margin: 0 0 0.3em;
+}
+.reveal .timetable .tt-rail {
+  list-style: none; margin: 0 0 0 0.5em; padding: 0;
+  border-left: 4px solid var(--hivemind-green-dark);
+}
+/* `.reveal li` shrinks list items to 0.5em; the rail sets its own size. */
+.reveal .timetable .tt-rail li { position: relative; font-size: 0.8em; margin: 0; padding-left: 1.2em; line-height: 1.3; }
+.reveal .timetable .tt-stop::before {
+  content: ""; position: absolute; left: calc(-0.4em - 2px); top: 0.25em; width: 0.8em; height: 0.8em;
+  border-radius: 50%; background: #fff; border: 4px solid var(--hivemind-green-dark); box-sizing: border-box;
+}
+.reveal .timetable .tt-stop span { display: block; color: var(--hivemind-medium-gray); font-size: 0.85em; }
+.reveal .timetable .tt-rail .tt-break { font-size: 0.8em; color: #b0b0b0; padding-top: 0.4em; padding-bottom: 0.4em; }
+.reveal .timetable .tt-legend { font-size: 0.8em; color: var(--hivemind-medium-gray); margin-top: 1em; }
+
+/* === Quote slide === */
+/* A slide that holds one quote and its author, nothing else: the quote fills
+   the slide, without the grey box a quoted prompt gets. */
+.reveal .quote-slide blockquote {
+  border-left: none;
+  background: none;
+  box-shadow: none;
+  width: 85%;
+  margin: 1.5em auto 0.6em;
+  text-align: center;
+}
+.reveal .quote-slide blockquote p { font-size: 1.1em; line-height: 1.35; color: var(--hivemind-dark-gray); }
+.reveal .quote-slide blockquote::before {
+  content: "\201C";
+  display: block;
+  font-size: 4em;
+  line-height: 0.6;
+  color: var(--hivemind-red);
+  font-style: normal;
+}
+.reveal .quote-slide .quote-author { text-align: center; font-size: 0.6em; }
+
+/* "Innocent tasks" (harness1): a plain messenger window. The user's request
+   sits right, the cute agent left and still typing, so the audience reads the
+   request as harmless before the next slide shows what happened. */
+.reveal .chat {
+  width: 60%;
+  margin: 0.8em auto;
+  padding: 1em 1.2em;
+  background: #f7f6f3;
+  border-radius: 1em;
+}
+.reveal .chat-user {
+  width: fit-content;
+  margin: 0 0 0.8em auto;
+  padding: 0.5em 0.9em;
+  font-size: 0.6em;
+  color: var(--hivemind-black);
+  background: #d8e8fb;
+  border-radius: 1.2em;
+}
+.reveal .chat-agent { display: flex; align-items: center; gap: 0.4em; }
+.reveal img.chat-avatar { width: 80px; height: 80px; margin: 0; border-radius: 50%; }
+.reveal .chat-typing {
+  padding: 0.3em 0.8em;
+  font-size: 0.6em;
+  color: #999;
+  background: #fff;
+  border-radius: 1.2em;
+}
+
+/* === Poll slide === */
+/* An opening question the audience answers in the chat or under Reactions.
+   A numbered list becomes a staircase of four cards: each level reaches
+   higher, so "how far" reads at a glance. The answer line is an
+   instruction, not content: a pale pill under the content. */
+.reveal .poll ol {
+  counter-reset: step;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: end;
+  gap: 0.4em;
+  margin: 0.8em 0 0;
+  padding: 0;
+}
+.reveal .poll ol li {
+  counter-increment: step;
+  font-size: 0.5em;
+  margin: 0;
+  padding: 0.8em 0.9em 1em;
+  background: var(--hivemind-light-gray);
+  border-top: 0.25em solid var(--hivemind-red);
+  line-height: 1.3;
+}
+.reveal .poll ol li::before {
+  content: counter(step);
+  display: block;
+  font-size: 2.2em;
+  font-weight: bold;
+  line-height: 1;
+  color: var(--hivemind-red);
+  margin-bottom: 0.3em;
+}
+.reveal .poll ol li strong { display: block; color: var(--hivemind-black); font-size: 1.15em; margin-bottom: 0.2em; }
+.reveal .poll ol li:nth-child(1) { min-height: 5em; }
+.reveal .poll ol li:nth-child(2) { min-height: 6.5em; }
+.reveal .poll ol li:nth-child(3) { min-height: 8em; }
+.reveal .poll ol li:nth-child(4) { min-height: 9.5em; }
+.reveal .poll > p:last-child {
+  display: inline-block;
+  margin-top: 1.2em;
+  padding: 0.35em 0.9em;
+  font-size: 0.45em;
+  color: var(--hivemind-medium-gray);
+  background: var(--hivemind-light-gray);
+  border-radius: 1em;
+}

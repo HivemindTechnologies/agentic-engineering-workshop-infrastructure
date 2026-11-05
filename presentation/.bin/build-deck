@@ -1,0 +1,583 @@
+#!/usr/bin/env python3
+"""Assemble a workshop deck from a spine + the lessons it lists.
+
+  build-deck                           assemble every deck*.md into .build/<stem>.md
+  build-deck deck-infrastructure-part1.md    assemble one spine
+  build-deck --lint                    validate every lessons/*.md and every spine
+
+A spine is title slides, an inline `<!-- lessons ... -->` list, and the wrap-up
+slides. In the list, `== <title>` opens a part (one half-day), `-- <title>`
+opens a block inside it (its own divider slide), `~~ Break` ends a round with
+a break slide (open questions are answered before it, see "Asking
+questions"), and every other line is a lesson id; a leading `#` skips a line. The list carries no minutes: nothing
+has been timed with a room, and a guessed number reads like a measured one.
+Lesson content is lessons/<id>.md, no frontmatter, just a `# 💡 <Name> <n>`
+theory heading or `# 🏝️ <Name> <n>` for a sandbox / journey-backed Steckbrief,
+and at most one `## 🛠️ <Name> <n>` exercise section (n = the id's trailing
+number), or steps on their own slides, each `## 🛠️ <Name> <n>: <step>`; a
+theory-only lesson has none. A `## 💬 Discuss: <question>?` slide asks the room
+to weigh options; any lesson may have one. A plain `# <Name>` heading over an
+`<img class="drawing">` marks a drawing slide: no icon, no number, no exercise,
+not on the agenda. build-deck splices the lessons in at
+the marker and opens each block with a divider slide. The divider shows the
+part's agenda (the 💡 lessons only) with the current block highlighted, so the
+room sees where it is; the part's first divider also names the deck and part.
+A break slide shows only its title and a coffee cup: the next block's divider
+shows the agenda, so a second agenda here would only blur the two slides.
+Each `--` block is a progress-chrome section (outer.v24.M3a–c): assemble stamps
+data-section-* on its slides and writes `.build/<spine>.sections.json`. Unnamed
+blocks fall back to the parent `==` part title. Break-bounded rounds (outer.v24.M3e)
+also get data-round-* so the bar advances per slide and resets after `~~ Break`.
+
+The two spines share the Part 1 lesson files on purpose: Part 1 is the same
+workshop held once per track, so a fix lands in one place.
+"""
+
+from __future__ import annotations
+
+import html
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+PRES = Path(__file__).resolve().parent.parent          # presentation/
+REPO = PRES.parent                                      # outer shell root
+LESSONS_DIR = PRES / "lessons"                          # presentation/lessons/
+BUILD_DIR = PRES / ".build"
+BRIDGE = REPO / "scripts" / "presentation-bridge"
+
+# Import sibling expand helpers (outer.v24.M1a).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import directives as deck_directives  # noqa: E402
+
+# word[+hyphen-word]* + digits + optional letter (harness1, lesson-refine1a)
+ID_RE = re.compile(r"^(?:[a-z]+-)*[a-z]+\d+[a-z]?$")
+LESSONS_BLOCK_RE = re.compile(r"<!-- lessons\b.*?-->", re.DOTALL)
+LIST_LINE_RE = re.compile(r"^\s*((?:[a-z]+-)*[a-z]+\d+[a-z]?)\s*$")
+STALE_LINE_RE = re.compile(r"^\s*(?:[a-z]+-)*[a-z]+\d+[a-z]?\s+\d")
+PART_LINE_RE = re.compile(r"^\s*==\s*(.+?)\s*$")
+# The space after `--` keeps the comment's closing `-->` from reading as a block.
+BLOCK_LINE_RE = re.compile(r"^\s*--\s+(.+?)\s*$")
+BREAK_LINE_RE = re.compile(r"^\s*~~\s*(.*?)\s*$")
+# A row in a block is a lesson id or this marker; no lesson id can equal it.
+BREAK = "~~ Break"
+DECK_TITLE_RE = re.compile(r'<h1 class="title">(.+?)</h1>')
+SEP = "\n\n---\n\n"
+# Horizontal `---` or vertical `----` slide breaks (reveal-md separators).
+SLIDE_BREAK_RE = re.compile(r"(\n\n----?\n\n)")
+DOT_SLIDE_RE = re.compile(r"<!--\s*\.slide:\s*(.*?)\s*-->", re.DOTALL)
+# The exercise slide stays on screen while everyone works, so the one rule
+# participants need sits on it. One constant, appended at build time, so no
+# lesson repeats it.
+EXERCISE_FOOTER = '<p class="exercise-footer">Everyone runs this on their laptop. React \u2705 when done.</p>'
+
+
+def add_exercise_footers(text: str) -> str:
+    """Append EXERCISE_FOOTER to every slide that holds a `## 🛠️` heading."""
+    parts = SLIDE_BREAK_RE.split(text)
+    for i in range(0, len(parts), 2):  # odd indices are the separators
+        if any(l.startswith("## 🛠️") for l in _outside_fences(parts[i].splitlines())):
+            parts[i] = parts[i].rstrip() + "\n\n" + EXERCISE_FOOTER
+    return "".join(parts)
+
+
+def section_label(title: str) -> str:
+    """Short section name for chrome: text before the first `: `, else whole title."""
+    head, _, _ = title.partition(": ")
+    return head.strip() or title.strip()
+
+
+def section_titles(listed: Parts) -> list[str]:
+    """One label per spine `--` block. Fallback: part `==` title when a block is unnamed."""
+    titles: list[str] = []
+    for part_title, blocks in listed:
+        for i, (block, _rows) in enumerate(blocks):
+            raw = block or (part_title if part_title else f"Section {len(titles) + 1}")
+            if not raw and i == 0:
+                raw = f"Section {len(titles) + 1}"
+            titles.append(section_label(raw) if raw else f"Section {len(titles) + 1}")
+    return titles
+
+
+def count_slide_fragments(body: str) -> int:
+    """How many reveal slides a body yields (splits on --- / ----)."""
+    n = 0
+    for part in SLIDE_BREAK_RE.split(body):
+        if SLIDE_BREAK_RE.fullmatch(part):
+            continue
+        if part.strip():
+            n += 1
+    return n
+
+
+def _merge_slide_attrs(frag: str, attrs: str) -> str:
+    """Merge attrs into an existing <!-- .slide: --> or prepend one."""
+    if not frag.strip():
+        return frag
+    m = DOT_SLIDE_RE.search(frag)
+    if m:
+        existing = m.group(1).strip()
+        if "data-section-index=" in existing or "data-round-slide=" in existing:
+            return frag
+        merged = f"<!-- .slide: {existing} {attrs} -->"
+        return frag[: m.start()] + merged + frag[m.end() :]
+    return f"<!-- .slide: {attrs} -->\n\n{frag.lstrip()}"
+
+
+def stamp_section(
+    body: str,
+    *,
+    index: int,
+    title: str,
+    count: int,
+    round_index: int | None = None,
+    round_slide_start: int = 0,
+    round_count: int | None = None,
+) -> str:
+    """Attach data-section-* (and optional data-round-*) to every slide fragment.
+
+    Section attrs: outer.v24.M3a. Round attrs (per-slide index within a
+    break-bounded round): outer.v24.M3e.
+    """
+    base = (
+        f'data-section-index="{index}" '
+        f'data-section-title="{html.escape(title, quote=True)}" '
+        f'data-section-count="{count}"'
+    )
+
+    slide_i = round_slide_start
+    parts = SLIDE_BREAK_RE.split(body)
+    out: list[str] = []
+    for part in parts:
+        if SLIDE_BREAK_RE.fullmatch(part):
+            out.append(part)
+            continue
+        if not part.strip():
+            out.append(part)
+            continue
+        attrs = base
+        if round_index is not None and round_count is not None:
+            attrs += (
+                f' data-round-index="{round_index}" '
+                f'data-round-slide="{slide_i}" '
+                f'data-round-count="{round_count}"'
+            )
+            slide_i += 1
+        out.append(_merge_slide_attrs(part, attrs))
+    return "".join(out)
+
+
+def spines() -> list[Path]:
+    return sorted(PRES.glob("deck*.md"))
+
+
+class SpecError(Exception):
+    pass
+
+
+def num_of(lesson_id: str) -> str:
+    """Trailing number, optionally with a letter postfix (1a, 1b)."""
+    return re.search(r"\d+[a-z]?$", lesson_id).group(0)
+
+
+Rows = list[str]                             # lesson ids and BREAK, in order
+Parts = list[tuple[str, list[tuple[str, Rows]]]]  # [(part title, [(block title, rows)])]
+
+
+def rows_of(blocks) -> list:
+    """The lesson ids of the blocks, without the breaks."""
+    return [row for _b, rows in blocks for row in rows if row != BREAK]
+
+
+def read_list(spine: Path) -> Parts:
+    """Return every part with its blocks; "" is the title of an unnamed one."""
+    if not spine.exists():
+        raise SpecError(f"missing {spine.name}")
+    m = LESSONS_BLOCK_RE.search(spine.read_text(encoding="utf-8"))
+    if not m:
+        raise SpecError(f"{spine.name} has no <!-- lessons ... --> block")
+    parts: Parts = []
+    for raw in m.group(0).splitlines():
+        if raw.lstrip().startswith("#"):
+            continue
+        pm = PART_LINE_RE.match(raw)
+        if pm:
+            parts.append((pm.group(1), []))
+            continue
+        bm = BLOCK_LINE_RE.match(raw)
+        if bm:
+            if not parts:
+                parts.append(("", []))
+            parts[-1][1].append((bm.group(1), []))
+            continue
+        km = BREAK_LINE_RE.match(raw)
+        if km:
+            # One marker kind only; a typo must not drop a break silently.
+            if km.group(1) != "Break":
+                raise SpecError(f"{spine.name}: a break line is `~~ Break`, got {raw.strip()!r}")
+            if not parts or not parts[-1][1]:
+                raise SpecError(f"{spine.name}: `~~ Break` before any block")
+            parts[-1][1][-1][1].append(BREAK)
+            continue
+        # An id followed by a number does not match LIST_LINE_RE, so the lesson would
+        # drop out of the deck silently. Fail instead.
+        if STALE_LINE_RE.match(raw):
+            raise SpecError(f"{spine.name}: a lesson line is the id alone, got {raw.strip()!r}")
+        lm = LIST_LINE_RE.match(raw)
+        if lm:
+            if not parts:
+                parts.append(("", []))
+            if not parts[-1][1]:
+                parts[-1][1].append(("", []))
+            parts[-1][1][-1][1].append(lm.group(1))
+    if not any(rows_of(blocks) for _t, blocks in parts):
+        raise SpecError(f"{spine.name} lesson list is empty")
+    return parts
+
+
+def _outside_fences(lines: list[str]):
+    in_fence = False
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            yield line
+
+
+def validate_lesson_source(lesson_id: str, raw: str) -> tuple[str, str]:
+    """Validate lesson markdown text; return (icon, name)."""
+    if not ID_RE.match(lesson_id):
+        raise SpecError(
+            f"lesson id {lesson_id!r} must be <word>[-<word>]*<number>[letter]? "
+            f"(e.g. harness1, lesson-refine1a)"
+        )
+    lines = raw.splitlines()
+    n = num_of(lesson_id)
+    meta = deck_directives.parse_slide_meta(raw)
+    kind = meta.get("kind")
+
+    drawing_hd = re.match(r"^# (?!💡|🏝️)(.+)$", lines[0].rstrip()) if lines else None
+    if drawing_hd and 'class="drawing"' in raw:
+        if any(l.startswith("## 🛠️") for l in _outside_fences(lines)):
+            raise SpecError(f"lessons/{lesson_id}.md: a drawing slide has no exercise")
+        return "", drawing_hd.group(1)
+
+    # The title's number is optional, and our titles leave it out: a number
+    # the audience cannot map to an earlier lesson confuses ("Share 2" was the
+    # first Share lesson). The exercise heading repeats the title as written,
+    # number or not.
+    theory_hd = (
+        re.match(rf"^# (💡|🏝️) (.+?)( {n})?$", lines[0].rstrip()) if lines else None
+    )
+    if theory_hd:
+        icon, name = theory_hd.group(1), theory_hd.group(2)
+        num = theory_hd.group(3) or ""
+    elif kind and lines and lines[0].startswith("# "):
+        icon = deck_directives.icon_from_kind(kind)
+        name = re.sub(r"^[💡🏝️🛠️💬]\s*", "", lines[0][2:].strip())
+        trailing = re.search(rf"\s+{re.escape(n)}$", name)
+        num = trailing.group(0) if trailing else ""
+        name = re.sub(rf"\s+{re.escape(n)}$", "", name).strip() or name
+        if not icon and kind not in ("listen", "work", "discuss"):
+            raise SpecError(
+                f"lessons/{lesson_id}.md: unknown slide kind {kind!r} "
+                f"(want listen|work|discuss)"
+            )
+    else:
+        got = repr(lines[0]) if lines else "'<empty>'"
+        raise SpecError(
+            f"lessons/{lesson_id}.md: first line must be "
+            f"`# 💡 <Name>[ {n}]`, `# 🏝️ <Name>[ {n}]`, `# <Name>` over a drawing, "
+            f"or any `# …` with `<!-- slide: kind=… -->`, got {got}"
+        )
+
+    n_theory = sum(1 for l in _outside_fences(lines) if l.rstrip() == lines[0].rstrip())
+    if n_theory != 1:
+        raise SpecError(
+            f"lessons/{lesson_id}.md: need exactly one {lines[0].rstrip()!r}, found {n_theory}"
+        )
+
+    # A Discuss slide asks the room one question with no answer on the slide,
+    # so its heading must be that question.
+    for head in (l.rstrip() for l in _outside_fences(lines) if l.startswith("## 💬")):
+        if not re.match(r"^## 💬 Discuss: .+\?$", head):
+            raise SpecError(
+                f"lessons/{lesson_id}.md: discuss headings must be "
+                f"'## 💬 Discuss: <question>?', found {head!r}"
+            )
+    # Theory sits in one column; practice (exercise, Discuss or both) sits in
+    # the column to its right, opened by `---`. So the presenter reaches it
+    # with the right arrow, never by scrolling down through the theory. A
+    # Discuss slide either opens that column or sits below an exercise in it.
+    for m in re.finditer(r"^## 💬.*$", raw, re.M):
+        before = raw[: m.start()]
+        if before.endswith("\n\n---\n\n"):
+            continue
+        column = before.rsplit("\n\n---\n\n", 1)
+        if (before.endswith("\n\n----\n\n") and len(column) == 2
+                and column[1].lstrip().startswith("## 🛠️")):
+            continue
+        raise SpecError(
+            f"lessons/{lesson_id}.md: put `---` (a new column) before "
+            f"{m.group(0)!r}, or `----` below an exercise in that column"
+        )
+
+    return icon, name
+
+
+def validate_lesson(lesson_id: str) -> tuple[str, str]:
+    """Return the lesson's (icon, name) for the id, raising SpecError on any problem."""
+    md = LESSONS_DIR / f"{lesson_id}.md"
+    if not md.is_file():
+        raise SpecError(f"lessons/{lesson_id}.md is missing")
+    return validate_lesson_source(lesson_id, md.read_text(encoding="utf-8"))
+
+
+def lint() -> int:
+    errors: list[str] = []
+    listed: set[str] = set()
+    for spine in spines():
+        try:
+            parts = read_list(spine)
+        except SpecError as e:
+            print(f"build-deck: {e}", file=sys.stderr)
+            return 1
+        for _title, blocks in parts:
+            for lesson_id in rows_of(blocks):
+                listed.add(lesson_id)
+                try:
+                    validate_lesson(lesson_id)
+                except SpecError as e:
+                    errors.append(f"({spine.name}) {e}")
+
+    known = {p.stem for p in LESSONS_DIR.glob("*.md") if not p.name.startswith("_")}
+    for lesson_id in sorted(known - listed):
+        try:
+            validate_lesson(lesson_id)
+        except SpecError as e:
+            errors.append(f"(not listed in deck.md) {e}")
+
+    if errors:
+        print("lesson check FAILED:")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+    print(f"lesson check ok ({len(listed)} listed, {len(known - listed)} unlisted file(s))")
+    return 0
+
+
+# Agenda = [(block title, [(position, icon, name)])]: every lesson of a part
+# with its position in the part, so a slide can tell what is already taught.
+Agenda = list[tuple[str, list[tuple[int, str, str]]]]
+
+# A "<Name>, Continued" lesson is the second half of <Name>, split by a break;
+# listing it would show one topic as two on the agenda.
+CONTINUED_SUFFIX = ", Continued"
+
+
+def agenda(blocks: Agenda, taught: int, current: int | None) -> str:
+    """The part's agenda, one column per block, one 💡 lesson name per line.
+
+    Lessons before position `taught` are done (grey), a block whose lessons
+    are all done is done, and block number `current` is highlighted.
+    Names only: full lead-in sentences overflowed the slide.
+    """
+    cols = []
+    for i, (block, lessons) in enumerate(blocks):
+        state = ("current" if i == current
+                 else "done" if lessons and lessons[-1][0] < taught else "")
+        head = f'<p class="agenda-block">{block}</p>' if block else ""
+        items = "".join(
+            f'<li class="done">{name}</li>' if pos < taught else f"<li>{name}</li>"
+            for pos, icon, name in lessons
+            if icon == "💡" and not name.endswith(CONTINUED_SUFFIX)
+        )
+        col_class = f"agenda-col {state}" if state else "agenda-col"
+        cols.append(f'<div class="{col_class}">{head}<ul>{items}</ul></div>')
+    return '<div class="agenda">\n' + "\n".join(cols) + "\n</div>"
+
+
+def divider(kicker: str, title: str, agenda_html: str) -> str:
+    # "<head>: <topics>" renders as a short headline over its topics in small type.
+    head, _, topics = title.partition(": ")
+    top = f'<p class="part-kicker">{kicker}</p>\n\n' if kicker else ""
+    sub = f'\n\n<p class="part-topics">{topics}</p>' if topics else ""
+    return f'<!-- .slide: class="block-slide" -->\n\n{top}## {head}{sub}\n\n{agenda_html}'
+
+
+# No agenda and no clock time: the divider after the break shows where the
+# room is, and the trainers say live when the room is back.
+BREAK_SLIDE = """<!-- .slide: class="break-slide" -->
+
+## Break
+
+<p class="break-icon">☕</p>"""
+
+
+def assemble(spine: Path) -> int:
+    listed = read_list(spine)
+    deck_text = spine.read_text(encoding="utf-8")
+    # The spine's title slide owns the deck title; part slides repeat it from there.
+    tm = DECK_TITLE_RE.search(deck_text)
+    if not tm:
+        raise SpecError(f'{spine.name} has no <h1 class="title"> on its title slide')
+    deck_title = tm.group(1)
+    BUILD_DIR.mkdir(exist_ok=True)
+    link = BUILD_DIR / "assets"
+    if not link.exists():
+        link.symlink_to(Path("..") / "assets")
+
+    # Section progress chrome (outer.v24.M3a–c): one entry per `--` block.
+    # Fallback for an unnamed block is the parent `==` part title (see section_titles).
+    # Round progress (outer.v24.M3e): slides between ~~ Break markers; bar resets after each break.
+    sec_titles = section_titles(listed)
+    sec_count = len(sec_titles)
+    sec_flat = 0  # flat index across parts
+
+    bodies: list[str] = []
+    # Buffered (body, section kwargs) until a break closes the round.
+    round_buf: list[tuple[str, dict]] = []
+    round_id = 0
+    round_sizes: list[int] = []
+
+    def flush_round() -> None:
+        nonlocal round_id
+        if not round_buf:
+            return
+        total = sum(count_slide_fragments(b) for b, _ in round_buf)
+        slide_at = 0
+        for body, skw in round_buf:
+            bodies.append(
+                stamp_section(
+                    body,
+                    **skw,
+                    round_index=round_id,
+                    round_slide_start=slide_at,
+                    round_count=total,
+                )
+            )
+            slide_at += count_slide_fragments(body)
+        round_sizes.append(total)
+        round_buf.clear()
+        round_id += 1
+
+    for title, blocks in listed:
+        # Every lesson validated and numbered up front: each divider and break
+        # shows the whole part's agenda. Only 💡 theory lessons make the agenda;
+        # the many 🏝️ journey steps would bury the topics under repeated names.
+        part_agenda: Agenda = []
+        pos = 0
+        for block, rows in blocks:
+            lessons = []
+            for lesson_id in (r for r in rows if r != BREAK):
+                icon, name = validate_lesson(lesson_id)
+                lessons.append((pos, icon, name))
+                pos += 1
+            part_agenda.append((block, lessons))
+
+        taught = 0
+        for i, (block, rows) in enumerate(blocks):
+            # The first divider opens the part, so it also names deck and part.
+            # An unnamed first block still gets one, titled with the part.
+            kicker = f"{deck_title}: {title}" if i == 0 and title and block else ""
+            heading = block or (title if i == 0 else "")
+            s_idx = sec_flat
+            s_title = sec_titles[s_idx]
+            skw = {
+                "index": s_idx,
+                "title": s_title,
+                "count": sec_count,
+            }
+
+            if heading:
+                round_buf.append(
+                    (divider(kicker, heading, agenda(part_agenda, taught, i)), skw)
+                )
+            for row in rows:
+                if row == BREAK:
+                    round_buf.append((BREAK_SLIDE, skw))
+                    flush_round()
+                    continue
+                raw = (LESSONS_DIR / f"{row}.md").read_text(encoding="utf-8")
+                try:
+                    text = deck_directives.expand_text(raw).strip()
+                except deck_directives.DirectiveError as err:
+                    raise SpecError(f"lessons/{row}.md: {err}") from err
+                round_buf.append((add_exercise_footers(text), skw))
+                taught += 1
+            sec_flat += 1
+
+    flush_round()  # trailing lessons after the last break (if any)
+
+    before, after = LESSONS_BLOCK_RE.split(deck_text, maxsplit=1)
+    try:
+        before = deck_directives.expand_text(before)
+        after = deck_directives.expand_text(after)
+    except deck_directives.DirectiveError as err:
+        raise SpecError(f"{spine.name}: {err}") from err
+
+    deck = before.rstrip() + SEP + SEP.join(bodies) + "\n\n" + after.lstrip()
+    out = BUILD_DIR / spine.name
+    out.write_text(deck.rstrip() + "\n", encoding="utf-8")
+
+    sidecar = BUILD_DIR / f"{spine.stem}.sections.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "sections": [
+                    {"index": i, "title": t} for i, t in enumerate(sec_titles)
+                ],
+                "rounds": [
+                    {"index": i, "slide_count": n} for i, n in enumerate(round_sizes)
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    print(f"{spine.name} -> .build/{out.name}")
+    return 0
+
+
+def run_bridge() -> None:
+    """Refresh lesson-backed exercises before assemble/lint (outer.v17.M2a)."""
+    if not BRIDGE.is_file():
+        return
+    result = subprocess.run(
+        [sys.executable, str(BRIDGE)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "bridge failed").strip()
+        raise SpecError(f"presentation-bridge failed: {detail}")
+    if result.stdout.strip():
+        print(result.stdout.strip())
+
+
+def main(argv: list[str]) -> int:
+    try:
+        run_bridge()
+        if argv[1:] == ["--lint"]:
+            return lint()
+        chosen = [PRES / a for a in argv[1:]] if argv[1:] else spines()
+        if not chosen:
+            raise SpecError("no deck*.md spine found")
+        for spine in chosen:
+            rc = assemble(spine)
+            if rc:
+                return rc
+        return 0
+    except SpecError as e:
+        print(f"build-deck: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

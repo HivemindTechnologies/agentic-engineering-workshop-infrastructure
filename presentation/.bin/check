@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# CI gate: lesson contract, every deck builds, one exports, no machine-specific paths.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+REPO_ROOT="$(cd .. && pwd)"
+fail=0
+step() { printf '\n=== %s ===\n' "$1"; }
+
+step "lesson check (headings, ids, spine lists)"
+./.bin/build-deck --lint || fail=1
+
+step "assemble every deck*.md"
+./.bin/build-deck >/dev/null && echo "build ok" || fail=1
+
+step "static export (headless), one deck"
+./.bin/export-html infrastructure-part1 .build/dist-check >/dev/null && echo "export ok" || fail=1
+chmod -R u+w .build/dist-check 2>/dev/null; rm -rf .build/dist-check
+
+step "every reused comic carries its credit"
+# Every borrowed strip must name its author, title and source where it appears,
+# so the credit line is a gate, not a habit.
+uncredited="$(python3 - <<'PY'
+import pathlib, re
+bad = []
+for p in sorted(pathlib.Path("lessons").glob("*.md")):
+    text = p.read_text()
+    for m in re.finditer(r'<img[^>]*class="comic[" ][^>]*>', text):
+        rest = text[m.end():m.end() + 400]
+        if 'class="credit"' not in rest:
+            bad.append(f"{p}: comic without a credit line")
+print("\n".join(bad))
+PY
+)"
+if [[ -n "$uncredited" ]]; then
+  echo "$uncredited"
+  fail=1
+else
+  echo "all credited"
+fi
+
+step "no run of 14+ spaces in lessons/ or spines"
+# reveal-md indents the deck inside <textarea data-template> by 12 spaces plus a
+# blank line. The reveal.js markdown plugin (plugin/markdown/plugin.js) takes
+# those 14 characters as indentation and turns every run of 14 spaces anywhere
+# in the deck into a line break, splitting aligned columns and code comments.
+long_runs="$(grep -nE ' {14,}' lessons/*.md deck*.md || true)"
+if [[ -n "$long_runs" ]]; then
+  echo "runs of 14+ spaces render as line breaks; shorten them:"
+  echo "$long_runs"
+  fail=1
+else
+  echo "none"
+fi
+
+step "no machine-specific paths under presentation/"
+# Only files git would commit: build output and local tool state (gitignored,
+# e.g. an agent's socket registry) legitimately contain absolute paths.
+hits="$(git -C "$REPO_ROOT" ls-files -z -co --exclude-standard -- presentation \
+  | (cd "$REPO_ROOT" && xargs -0 grep -InE '/(Users|home)/[a-z]' /dev/null) \
+  | grep -v 'example only' || true)"
+if [[ -n "$hits" ]]; then
+  echo "found machine-specific paths:"
+  echo "$hits"
+  fail=1
+else
+  echo "clean"
+fi
+
+printf '\n'
+if [[ "$fail" -ne 0 ]]; then
+  echo "check: FAILED"
+  exit 1
+fi
+echo "check: OK"

@@ -1,0 +1,116 @@
+# One container holding Prometheus, Loki, Tempo, Pyroscope, an OTel collector
+# and Grafana. Grafana's development image: no persistence, admin/admin, every
+# API unauthenticated. Only for local use.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lgtm
+  labels:
+    app: lgtm
+  annotations:
+    ignore-check.kube-linter.io/no-read-only-root-fs: "every backend in the image writes its data below /"
+    ignore-check.kube-linter.io/run-as-non-root: "the image runs as root and is not ours to change"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lgtm
+  template:
+    metadata:
+      labels:
+        app: lgtm
+    spec:
+      containers:
+        - name: lgtm
+          image: grafana/otel-lgtm:0.37.0@sha256:57b5ab1ca6619beb180174e2fccce04762470750669d043f544b4726d0582d07
+          ports:
+            - containerPort: 3000 # grafana
+            - containerPort: 3100 # loki http api
+            - containerPort: 3200 # tempo http api
+            - containerPort: 4040 # pyroscope http api
+            - containerPort: 4317 # otlp grpc
+            - containerPort: 4318 # otlp http
+            - containerPort: 9090 # prometheus http api
+          # The image writes /tmp/ready once every backend answers.
+          readinessProbe:
+            exec:
+              command: ["cat", "/tmp/ready"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            # Loki stops ingesting once its filesystem is 90 % full
+            # (ingester.wal.disk_full_threshold). On the node that is the
+            # laptop's disk; a tmpfs of its own keeps logs flowing.
+            - name: loki
+              mountPath: /data/loki
+            - name: dashboards
+              mountPath: /etc/grafana-dashboards
+            # subPath, so the image's own provisioning files next to ours stay
+            # visible.
+            - name: provisioning
+              mountPath: /otel-lgtm/grafana/conf/provisioning/dashboards/workshop.yaml
+              subPath: dashboards.yaml
+            - name: provisioning
+              mountPath: /otel-lgtm/grafana/conf/provisioning/alerting/workshop.yaml
+              subPath: alerts.yaml
+      volumes:
+        - name: loki
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+        - name: provisioning
+          configMap:
+            name: grafana-provisioning
+---
+# Ingest: in-cluster workloads only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lgtm
+spec:
+  selector:
+    app: lgtm
+  ports:
+    - name: otlp-grpc
+      port: 4317
+    - name: otlp-http
+      port: 4318
+    # Pyroscope has no OTLP ingest, so profilers push to its own port.
+    - name: pyroscope
+      port: 4040
+---
+# Query: reachable from the host without a port forward. Node ports match the
+# k3d port mapping in the justfile.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lgtm-query
+spec:
+  type: NodePort
+  selector:
+    app: lgtm
+  ports:
+    - name: grafana
+      port: 3000
+      nodePort: 30000
+    - name: prometheus
+      port: 9090
+      nodePort: 30090
+    - name: loki
+      port: 3100
+      nodePort: 30100
+    - name: tempo
+      port: 3200
+      nodePort: 30200
+    - name: pyroscope
+      port: 4040
+      nodePort: 30400

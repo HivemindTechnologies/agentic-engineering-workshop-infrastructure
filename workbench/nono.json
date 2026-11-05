@@ -1,0 +1,49 @@
+{
+  "meta": {
+    "name": "agentic-workshop-infrastructure",
+    "version": "1.0.0",
+    "description": "Claude Code sandbox for this repository. Read-write: the repo, and its .git above workbench/, so the agent can commit (move $WORKDIR/../.git to filesystem.read and only a human commits). Read-only: the repo root above workbench/, because git starts there; without it every git command fails with \"unable to get current working directory\". The sandbox logs in on its own: the login lives in .claude-home/ (CLAUDE_CONFIG_DIR, set by just claude). Not granted: your host login in ~/.claude and the macOS Keychain (nono's claude_code_macos group would grant the Keychain, so neither claude_code_* group is included), the push key and admin kubeconfig in ~/.local/state/agentic-workshop-infrastructure, so the agent can commit but cannot push, and sees the cluster only through the read-only .kubeconfig. Denied: ~/.ssh, ~/.kube, ~/.docker and the other credential stores. Git config: yours stays outside; just passes only your name and email (GIT_CONFIG_GLOBAL=.cache/sandbox.gitconfig). No shared caches in $HOME: tools keep theirs in .cache/ (set in flake.nix). Unix sockets: only under $TMPDIR (temp dir of nix develop). Linux needs af_unix_mediation for that, else nono passes every socket through: the agent reached ssh-agent and the D-Bus user bus, where `systemd-run --user` escapes the sandbox. macOS needs the deny on the ssh-agent socket; Docker's sits in the denied ~/.docker. Network unfiltered; nono-strict.json filters it and keeps the real login token out."
+  },
+  "extends": "default",
+  "groups": {
+    "include": [
+      "deny_credentials",
+      "deny_shell_history",
+      "nix_runtime",
+      "system_read_linux_core",
+      { "name": "linux_sysfs_read", "when": "linux" },
+      "unlink_protection"
+    ]
+  },
+  "linux": { "af_unix_mediation": "pathname" },
+  "security": {
+    "signal_mode": "isolated",
+    "capability_elevation": false
+  },
+  "filesystem": {
+    "allow": [
+      "$WORKDIR",
+      "$WORKDIR/../.git"
+    ],
+    "read": ["$WORKDIR/.."],
+    "unix_socket_subtree_bind": ["$TMPDIR"],
+    "deny": [{ "path": "/private/tmp/com.apple.launchd.*", "when": "macos" }]
+  },
+  "network": { "block": false },
+  "workdir": { "access": "readwrite" },
+  "environment": {
+    "deny_vars": ["SSH_AUTH_SOCK", "SECRET_TOKEN"]
+  },
+  "open_urls": {
+    "allow_origins": [
+      "https://claude.ai",
+      "https://claude.com",
+      "https://api.anthropic.com",
+      "https://platform.claude.com"
+    ],
+    "allow_localhost": true
+  },
+  "diagnostics": {
+    "suppress_system_services": ["forbidden-exec-sugid"]
+  }
+}
